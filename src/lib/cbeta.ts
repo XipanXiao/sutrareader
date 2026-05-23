@@ -1,4 +1,4 @@
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { Converter } from "opencc-js";
 import { CbetaCatalogItem, SutraSection, SutraWork, TextBlock } from "../types";
 
