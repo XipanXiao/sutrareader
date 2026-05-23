@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Sutra Reader",
+    "slug": "sutrareader",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "sutrareader",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.xipanxiao.sutrareader"
+    },
+    "android": {
+      "package": "com.xipanxiao.sutrareader"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
