@@ -20,3 +20,17 @@ npm run ios
 
 Use `npm start` to choose another target from Expo.
 
+## Verification
+
+```bash
+npm run typecheck
+npm run export:web
+```
+
+If `npm run ios` says there are no simulator devices, install the iOS Simulator runtime from Xcode or run:
+
+```bash
+xcodebuild -downloadPlatform iOS
+```
+
+This project expects Expo SDK-compatible package versions. Run `npx expo install --fix` after dependency upgrades.
