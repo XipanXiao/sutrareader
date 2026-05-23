@@ -15,7 +15,6 @@ import { cbetaCatalog } from "./src/data/cbetaCatalog";
 import { sampleSutra } from "./src/data/sampleSutra";
 import { isCbetaWorkCached, loadCbetaWork } from "./src/lib/cbeta";
 import {
-  createProgressSegments,
   createReadRange,
   makePosition,
   offsetToPosition,
@@ -28,7 +27,6 @@ import { loadReaderState, resetReaderState, saveReaderState } from "./src/lib/st
 import {
   Bookmark,
   CbetaCatalogItem,
-  ProgressSegment,
   ReaderState,
   ReadingPosition,
   SutraWork,
@@ -36,10 +34,20 @@ import {
 
 type Screen = "home" | "library" | "outline" | "reader";
 type Theme = typeof lightTheme;
+type GlobalProgressSegment = {
+  id: string;
+  order: number;
+  startIndex: number;
+  endIndex: number;
+  label: string;
+};
 
 const makeId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const defaultCatalogItem =
   cbetaCatalog.find((item) => item.id === "T01n0001") ?? cbetaCatalog[0];
+const catalogIndexById = new Map(
+  cbetaCatalog.map((item, index) => [item.id, index] as const),
+);
 
 export default function App() {
   return (
@@ -70,8 +78,12 @@ function SutraReaderApp() {
   const workBookmarks = readerState.bookmarks.filter(
     (bookmark) => bookmark.workId === currentWork.id,
   );
-  const segments = useMemo(() => createProgressSegments(currentWork), [currentWork]);
   const progress = percentRead(currentWork, workRanges);
+  const globalProgress = useMemo(
+    () => calculateGlobalProgress(readerState.readRanges),
+    [readerState.readRanges],
+  );
+  const globalSegments = useMemo(() => createGlobalProgressSegments(144), []);
   const primaryBookmark =
     workBookmarks.find((bookmark) => bookmark.isPrimaryForWork) ?? workBookmarks[0];
 
@@ -96,7 +108,7 @@ function SutraReaderApp() {
     setScreen("reader");
   };
 
-  const openCatalogItem = async (item: CbetaCatalogItem) => {
+  const openCatalogItem = async (item: CbetaCatalogItem, destination: Screen = "home") => {
     setLoadingMessage(`Loading ${item.title}`);
     try {
       const work = await loadCbetaWork(item);
@@ -105,7 +117,7 @@ function SutraReaderApp() {
       const start = bookmark?.position ?? offsetToPosition(work, 0);
       setCurrentPosition(start);
       persist({ ...readerState, lastPosition: start });
-      setScreen("home");
+      setScreen(destination);
     } catch (error) {
       setLoadingMessage(
         error instanceof Error ? error.message : "Unable to load this CBETA work",
@@ -162,18 +174,18 @@ function SutraReaderApp() {
         <HomeScreen
           theme={theme}
           currentWork={currentWork}
-          segments={segments}
+          globalSegments={globalSegments}
           readerState={readerState}
-          workRanges={workRanges}
-          progress={progress}
+          globalProgress={globalProgress}
+          currentWorkProgress={progress}
           loadingMessage={loadingMessage}
           onOpenLibrary={() => setScreen("library")}
           onOpenOutline={() => setScreen("outline")}
           onContinue={() =>
             openReaderAt(primaryBookmark?.position ?? readerState.lastPosition ?? currentPosition)
           }
-          onOpenSegment={(segment) =>
-            openReaderAt(offsetToPosition(currentWork, segment.startOffset))
+          onOpenGlobalSegment={(segment) =>
+            openGlobalSegment(segment, globalProgress.workFractions, openCatalogItem)
           }
           onLoadDefault={() => openCatalogItem(defaultCatalogItem)}
           onReset={resetProgress}
@@ -219,66 +231,69 @@ function SutraReaderApp() {
 function HomeScreen({
   theme,
   currentWork,
-  segments,
+  globalSegments,
   readerState,
-  workRanges,
-  progress,
+  globalProgress,
+  currentWorkProgress,
   loadingMessage,
   onOpenLibrary,
   onOpenOutline,
   onContinue,
-  onOpenSegment,
+  onOpenGlobalSegment,
   onLoadDefault,
   onReset,
 }: {
   theme: Theme;
   currentWork: SutraWork;
-  segments: ProgressSegment[];
+  globalSegments: GlobalProgressSegment[];
   readerState: ReaderState;
-  workRanges: ReaderState["readRanges"];
-  progress: number;
+  globalProgress: ReturnType<typeof calculateGlobalProgress>;
+  currentWorkProgress: number;
   loadingMessage?: string;
   onOpenLibrary: () => void;
   onOpenOutline: () => void;
   onContinue: () => void;
-  onOpenSegment: (segment: ProgressSegment) => void;
+  onOpenGlobalSegment: (segment: GlobalProgressSegment) => void;
   onLoadDefault: () => void;
   onReset: () => void;
 }) {
-  const workBookmarks = readerState.bookmarks.filter(
-    (bookmark) => bookmark.workId === currentWork.id,
-  );
+  const activeBookmarks = readerState.bookmarks;
 
   return (
-    <View style={styles.screen}>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.homeContent}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.headerRow}>
         <View style={styles.headerCopy}>
           <Text style={[styles.appTitle, { color: theme.text }]}>Sutra Reader</Text>
           <Text style={[styles.subtitle, { color: theme.muted }]} numberOfLines={2}>
-            {currentWork.title}
+            Whole Sutra Sea
           </Text>
         </View>
         <Text style={[styles.percent, { color: theme.accent }]}>
-          {Math.round(progress * 100)}%
+          {formatPercent(globalProgress.percent)}
         </Text>
       </View>
 
       <Text style={[styles.catalogMeta, { color: theme.muted }]}>
-        CBETA library: {cbetaCatalog.length.toLocaleString()} works available
+        {globalProgress.completedWorks.toLocaleString()} of{" "}
+        {cbetaCatalog.length.toLocaleString()} works completed. Current: {currentWork.title} (
+        {Math.round(currentWorkProgress * 100)}%).
       </Text>
 
       <View style={styles.mapGrid}>
-        {segments.map((segment) => (
+        {globalSegments.map((segment) => (
           <ProgressDot
             key={segment.id}
             theme={theme}
-            fraction={segmentReadFraction(currentWork, segment, workRanges)}
-            bookmarked={workBookmarks.some((bookmark) => {
-              const offset = positionToOffset(currentWork, bookmark.position);
-              return offset >= segment.startOffset && offset < segment.endOffset;
-            })}
+            fraction={globalSegmentFraction(segment, globalProgress.workFractions)}
+            bookmarked={activeBookmarks.some((bookmark) =>
+              isWorkInGlobalSegment(bookmark.workId, segment),
+            )}
             label={segment.label}
-            onPress={() => onOpenSegment(segment)}
+            onPress={() => onOpenGlobalSegment(segment)}
           />
         ))}
       </View>
@@ -303,12 +318,12 @@ function HomeScreen({
 
       <View style={styles.panel}>
         <Text style={[styles.panelTitle, { color: theme.text }]}>Active bookmarks</Text>
-        {workBookmarks.slice(0, 4).map((bookmark) => (
+        {activeBookmarks.slice(0, 4).map((bookmark) => (
           <Text key={bookmark.id} style={[styles.bookmark, { color: theme.muted }]}>
             {bookmark.title}
           </Text>
         ))}
-        {workBookmarks.length === 0 ? (
+        {activeBookmarks.length === 0 ? (
           <Text style={[styles.bookmark, { color: theme.muted }]}>No bookmarks yet</Text>
         ) : null}
       </View>
@@ -322,7 +337,7 @@ function HomeScreen({
       <Pressable onPress={onReset} style={styles.resetButton}>
         <Text style={[styles.resetText, { color: theme.muted }]}>Reset local progress</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -665,6 +680,137 @@ function MiniBar({ theme, fraction }: { theme: Theme; fraction: number }) {
   );
 }
 
+function createGlobalProgressSegments(segmentCount: number): GlobalProgressSegment[] {
+  return Array.from({ length: segmentCount }, (_, index) => {
+    const startIndex = Math.floor((cbetaCatalog.length * index) / segmentCount);
+    const endIndex = Math.floor((cbetaCatalog.length * (index + 1)) / segmentCount);
+    const first = cbetaCatalog[startIndex];
+    const last = cbetaCatalog[Math.max(startIndex, endIndex - 1)];
+
+    return {
+      id: `global-${index}`,
+      order: index,
+      startIndex,
+      endIndex: Math.max(startIndex + 1, endIndex),
+      label: `${first?.canonTitle ?? "CBETA"} ${first?.sourceId ?? ""} - ${
+        last?.sourceId ?? ""
+      }`,
+    };
+  });
+}
+
+function calculateGlobalProgress(readRanges: ReaderState["readRanges"]) {
+  const rangesByWork = new Map<string, Array<readonly [number, number]>>();
+  const totalByWork = new Map<string, number>();
+
+  for (const range of readRanges) {
+    if (
+      typeof range.startOffset !== "number" ||
+      typeof range.endOffset !== "number" ||
+      typeof range.workTotalChars !== "number" ||
+      range.workTotalChars <= 0
+    ) {
+      continue;
+    }
+
+    const start = Math.max(0, Math.min(range.startOffset, range.endOffset));
+    const end = Math.max(start, Math.max(range.startOffset, range.endOffset));
+    const existing = rangesByWork.get(range.workId) ?? [];
+    rangesByWork.set(range.workId, [...existing, [start, end]]);
+    totalByWork.set(range.workId, range.workTotalChars);
+  }
+
+  const workFractions: Record<string, number> = {};
+  let completedWorks = 0;
+  let totalFraction = 0;
+
+  for (const item of cbetaCatalog) {
+    const ranges = rangesByWork.get(item.id) ?? [];
+    const total = totalByWork.get(item.id) ?? 0;
+    const fraction = total > 0 ? mergedIntervalLength(ranges) / total : 0;
+    const safeFraction = Math.max(0, Math.min(fraction, 1));
+    workFractions[item.id] = safeFraction;
+    totalFraction += safeFraction;
+    if (safeFraction >= 0.999) {
+      completedWorks += 1;
+    }
+  }
+
+  return {
+    completedWorks,
+    percent: totalFraction / cbetaCatalog.length,
+    workFractions,
+  };
+}
+
+function mergedIntervalLength(intervals: Array<readonly [number, number]>) {
+  const sorted = intervals
+    .filter(([start, end]) => end > start)
+    .sort(([a], [b]) => a - b);
+  let total = 0;
+  let currentStart: number | undefined;
+  let currentEnd: number | undefined;
+
+  for (const [start, end] of sorted) {
+    if (currentStart === undefined || currentEnd === undefined) {
+      currentStart = start;
+      currentEnd = end;
+    } else if (start <= currentEnd) {
+      currentEnd = Math.max(currentEnd, end);
+    } else {
+      total += currentEnd - currentStart;
+      currentStart = start;
+      currentEnd = end;
+    }
+  }
+
+  if (currentStart !== undefined && currentEnd !== undefined) {
+    total += currentEnd - currentStart;
+  }
+
+  return total;
+}
+
+function globalSegmentFraction(
+  segment: GlobalProgressSegment,
+  workFractions: Record<string, number>,
+) {
+  const items = cbetaCatalog.slice(segment.startIndex, segment.endIndex);
+  if (items.length === 0) {
+    return 0;
+  }
+
+  const total = items.reduce((sum, item) => sum + (workFractions[item.id] ?? 0), 0);
+  return total / items.length;
+}
+
+function isWorkInGlobalSegment(workId: string, segment: GlobalProgressSegment) {
+  const index = catalogIndexById.get(workId);
+  return index !== undefined && index >= segment.startIndex && index < segment.endIndex;
+}
+
+function openGlobalSegment(
+  segment: GlobalProgressSegment,
+  workFractions: Record<string, number>,
+  openCatalogItem: (item: CbetaCatalogItem, destination?: Screen) => void,
+) {
+  const items = cbetaCatalog.slice(segment.startIndex, segment.endIndex);
+  const target =
+    items.find((item) => (workFractions[item.id] ?? 0) < 0.999) ?? items[0];
+
+  if (target) {
+    openCatalogItem(target, "reader");
+  }
+}
+
+function formatPercent(value: number) {
+  if (value > 0 && value < 0.001) {
+    return "<0.1%";
+  }
+
+  return `${(value * 100).toFixed(value < 0.01 ? 1 : 0)}%`;
+}
+
 function createBookmark(
   work: SutraWork,
   position: ReadingPosition,
@@ -731,6 +877,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
   },
+  homeContent: {
+    paddingBottom: 18,
+  },
   headerRow: {
     alignItems: "flex-start",
     flexDirection: "row",
@@ -766,27 +915,27 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     justifyContent: "center",
     marginHorizontal: "auto",
-    maxWidth: 312,
-    rowGap: 10,
+    maxWidth: 336,
+    rowGap: 5,
   },
   dotHit: {
     alignItems: "center",
     borderRadius: 8,
-    height: 42,
+    height: 24,
     justifyContent: "center",
-    marginHorizontal: 5,
-    width: 42,
+    marginHorizontal: 2,
+    width: 24,
   },
   dot: {
-    borderRadius: 5,
-    height: 13,
-    width: 13,
+    borderRadius: 4,
+    height: 9,
+    width: 9,
   },
   actionRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
-    marginTop: 26,
+    marginTop: 22,
   },
   button: {
     alignItems: "center",

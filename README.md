@@ -8,7 +8,7 @@ Mobile sutra reader prototype focused on precise reading progress.
 - Searchable CBETA XML P5 catalog with 5,005 works.
 - On-demand CBETA text download and offline cache.
 - Simplified Chinese reader text converted at import time.
-- Home progress map with full and partial dot states.
+- Global home progress map across the whole CBETA sutra sea, with full and partial dot states.
 - Outline view for linear navigation.
 - Reader with `Start`, `Mark Here`, and bookmark actions.
 - Persisted read ranges and arbitrary reading positions using local storage.

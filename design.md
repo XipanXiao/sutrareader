@@ -4,7 +4,7 @@
 
 Sutra Reader is a calm mobile reading app for Buddhist sutras that makes long-term reading visible, resumable, and meaningful.
 
-The core difference from ordinary ebook or scripture apps is the home screen: it is not a library shelf first, but a living progress map. The reader can see how much of the selected sutra collection has been read, jump into any point, resume any previous bookmark, and gradually fill a visual field of dots over months or years.
+The core difference from ordinary ebook or scripture apps is the home screen: it is not a library shelf first, but a living progress map. The reader can see how much of the whole sutra sea has been read, jump into any point, resume any previous bookmark, and gradually fill a visual field of dots over months or years.
 
 Initial platform: iOS.
 
@@ -13,7 +13,7 @@ Secondary goal: keep the data model, import pipeline, and sync assumptions porta
 ## 2. Design Principles
 
 - Reading should feel spacious, quiet, and stable.
-- Progress should be visible without making the app feel gamified.
+- Global progress should be visible without making the app feel gamified.
 - The reader must be able to begin from anywhere, not only from the first page of a text.
 - Bookmarks are first-class because the reader may move among multiple sutras.
 - Bookmarks must preserve arbitrary in-page positions, not only section or paragraph starts.
@@ -25,7 +25,7 @@ Secondary goal: keep the data model, import pipeline, and sync assumptions porta
 ## 3. Target User Flow
 
 1. Open app.
-2. See a progress map for the current reading collection.
+2. See a global progress map for the whole sutra sea.
 3. Tap `Continue` to resume the most recent bookmark, or tap any dot/outline item to start elsewhere.
 4. Read in a comfortable full-screen reader.
 5. Tap `Start` when beginning a reading session.
@@ -34,19 +34,20 @@ Secondary goal: keep the data model, import pipeline, and sync assumptions porta
    - current sutra position
    - read span from session start to marked position
    - bookmark for that sutra
-   - aggregate progress for the collection
+   - aggregate progress for the whole sutra sea
 8. Return home and see more dots filled.
 
 ## 4. Primary Screens
 
-### 4.1 Home: Progress Map
+### 4.1 Home: Global Progress Map
 
-Purpose: provide emotional orientation and fast return to reading.
+Purpose: provide a global perspective on the reader's progress through the whole sutra sea, plus fast return to reading.
 
 Content:
 
-- Current collection title, such as `大藏经`, `大般若波罗蜜多经`, or a custom reading plan.
-- Main progress visualization.
+- Whole-corpus title, such as `大藏经`, `CBETA`, or a custom reading plan.
+- Main global progress visualization.
+- Current active sutra shown as secondary context.
 - `Continue` button for latest bookmark.
 - Small list of active bookmarks.
 - Switch between `Map` and `Outline`.
@@ -57,8 +58,8 @@ Suggested layout:
 ```text
 +-----------------------------+
 | Sutra Reader        Search  |
-| 大般若波罗蜜多经              |
-| 513 / 600 segments read      |
+| Whole Sutra Sea              |
+| 3.2% global progress         |
 |                             |
 |     . . # # # # . .         |
 |   . # # # # ~ . . .         |
@@ -76,16 +77,17 @@ Suggested layout:
 +-----------------------------+
 ```
 
-Map behavior:
+Global map behavior:
 
-- Each dot represents a normalized text segment.
+- Each dot represents an ordered segment of the whole sutra sea, not just the currently open sutra.
 - Empty dot: unread.
 - Filled dot: fully read.
 - Partially filled dot: partially read.
-- Tapping a dot opens the nearest corresponding text location.
+- Tapping a dot opens the first unfinished work or nearest corresponding text location in that global segment.
 - Long-pressing a dot on mobile shows the full label.
 - On iPad/macOS or future web, hover shows the label.
 - Pinch zoom can reveal smaller subsegments in later versions.
+- The current sutra can have its own local progress in outline/reader context, but the homepage map must stay global.
 
 Visual shape options:
 
@@ -93,7 +95,7 @@ Visual shape options:
 - V2: selectable shapes, including square, circle, lotus-like radial field, or 卍-shaped path.
 - Important: the shape must still preserve deterministic mapping from dot to text order.
 
-Recommendation: build the MVP as a square grid first. It is readable, accessible, and technically reliable. Add symbolic shapes after the progress model is proven.
+Recommendation: build the MVP as a dense square grid first. It is readable, accessible, and technically reliable. Add symbolic shapes after the global progress model is proven.
 
 ### 4.2 Outline View
 
@@ -319,6 +321,9 @@ ReadRange
   work_id
   start_position_id
   end_position_id
+  start_offset
+  end_offset
+  work_total_chars
   created_at
   source_session_id
 
@@ -337,6 +342,8 @@ ProgressSegment
   collection_id
   start_anchor_id
   end_anchor_id
+  start_work_id
+  end_work_id
   order_index
   label
   read_fraction   // 0.0 to 1.0, derived/cacheable
@@ -360,12 +367,13 @@ Positions should be finer than anchors. Anchors provide stable source references
 
 ## 7. Progress Map Design
 
-### 7.1 Segment Generation
+### 7.1 Global Segment Generation
 
-A collection is divided into ordered `ProgressSegment`s.
+The home screen divides the whole sutra sea into ordered `ProgressSegment`s.
 
 Segment size options:
 
+- by ordered work ranges for MVP
 - by volume/juan for high-level view
 - by chapter/pin for medium view
 - by fixed character count for even visual distribution
@@ -373,24 +381,28 @@ Segment size options:
 
 MVP recommendation:
 
-- Build 1 dot per fixed character range, approximately 1,000 to 3,000 Chinese characters.
-- Never split inside a paragraph if avoidable.
-- Keep segment labels based on the nearest section title:
-  `大般若波罗蜜多经 - 卷第五百一十三 - 第三分真如品第十九之一`
+- Build a dense grid of global dots, each covering an ordered slice of the CBETA work catalog.
+- A dot can summarize many works in the early MVP.
+- Tapping a global dot opens the first unfinished work inside that dot's catalog slice.
+- Keep segment labels based on the covered range:
+  `大正藏 T01n0001 - T01n0025`
+- Later, refine global segments by character count after the import pipeline has reliable total character counts for every work.
 
 ### 7.2 Partial Fill Calculation
 
-For each segment:
+For each global segment:
 
 ```text
-read_fraction = read_char_count_inside_segment / total_char_count_inside_segment
+read_fraction = sum(work_read_fraction_inside_segment) / work_count_inside_segment
 ```
 
-If exact character counts are expensive, use anchor coverage:
+For each work:
 
 ```text
-read_fraction = read_anchor_count_inside_segment / total_anchor_count_inside_segment
+work_read_fraction = merged_read_char_count / work_total_chars
 ```
+
+The app stores `start_offset`, `end_offset`, and `work_total_chars` in each `ReadRange` so global progress can be computed even when that sutra is not currently open.
 
 ### 7.3 Dot Rendering
 

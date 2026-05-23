@@ -164,12 +164,17 @@ export const createReadRange = (
 ): ReadRange => {
   const startOffset = positionToOffset(work, start);
   const endOffset = positionToOffset(work, end);
+  const orderedStartOffset = Math.min(startOffset, endOffset);
+  const orderedEndOffset = Math.max(startOffset, endOffset);
 
   return {
     id: id(),
     workId: work.id,
     start: startOffset <= endOffset ? start : end,
     end: startOffset <= endOffset ? end : start,
+    startOffset: orderedStartOffset,
+    endOffset: orderedEndOffset,
+    workTotalChars: totalChars(work),
     createdAt: new Date().toISOString(),
   };
 };

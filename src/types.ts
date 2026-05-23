@@ -74,6 +74,9 @@ export type ReadRange = {
   workId: string;
   start: ReadingPosition;
   end: ReadingPosition;
+  startOffset?: number;
+  endOffset?: number;
+  workTotalChars?: number;
   createdAt: string;
 };
 

@@ -14,4 +14,4 @@ Note that there are multiple bookmarks: I may start reading 大般若波罗蜜�
 The display should be good for reading, not too crowded, not too small. clear and comfortable.
 I could be stopping at the middle of any page, so bookmarks need to be able to record arbitrary positions in the sea.
 I prefer reading simplifiled Chinese.
-
+Note that the progress dots should show the global progress, that is, it shows how much I have finished in the whole sea. So you may add more dots to the homepage, and partially hightlight a dot if it is partially finished. I need a global perspective so that I know how much I finished.
