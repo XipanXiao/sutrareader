@@ -4,14 +4,34 @@
     "slug": "sutrareader",
     "version": "0.1.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "scheme": "sutrareader",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.xipanxiao.sutrareader"
+      "bundleIdentifier": "com.xipanxiao.sutrareader",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false
+        }
+      }
     },
     "android": {
-      "package": "com.xipanxiao.sutrareader"
+      "package": "com.xipanxiao.sutrareader",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#faf8f2"
+      }
+    },
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#faf8f2"
     },
     "web": {
       "bundler": "metro"

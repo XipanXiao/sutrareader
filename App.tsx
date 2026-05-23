@@ -2,14 +2,18 @@ import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Pressable,
+  FlatList,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
   useColorScheme,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { cbetaCatalog } from "./src/data/cbetaCatalog";
 import { sampleSutra } from "./src/data/sampleSutra";
+import { isCbetaWorkCached, loadCbetaWork } from "./src/lib/cbeta";
 import {
   createProgressSegments,
   createReadRange,
@@ -21,11 +25,21 @@ import {
   totalChars,
 } from "./src/lib/progress";
 import { loadReaderState, resetReaderState, saveReaderState } from "./src/lib/storage";
-import { Bookmark, ProgressSegment, ReaderState, ReadingPosition } from "./src/types";
+import {
+  Bookmark,
+  CbetaCatalogItem,
+  ProgressSegment,
+  ReaderState,
+  ReadingPosition,
+  SutraWork,
+} from "./src/types";
 
-type Screen = "home" | "outline" | "reader";
+type Screen = "home" | "library" | "outline" | "reader";
+type Theme = typeof lightTheme;
 
 const makeId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const defaultCatalogItem =
+  cbetaCatalog.find((item) => item.id === "T01n0001") ?? cbetaCatalog[0];
 
 export default function App() {
   return (
@@ -44,24 +58,32 @@ function SutraReaderApp() {
     bookmarks: [],
     readRanges: [],
   });
+  const [currentWork, setCurrentWork] = useState<SutraWork>(sampleSutra);
   const [currentPosition, setCurrentPosition] = useState<ReadingPosition>(() =>
     offsetToPosition(sampleSutra, 0),
   );
+  const [loadingMessage, setLoadingMessage] = useState<string>();
 
-  const segments = useMemo(() => createProgressSegments(sampleSutra), []);
-  const progress = percentRead(sampleSutra, readerState.readRanges);
-  const primaryBookmark = readerState.bookmarks.find((bookmark) => bookmark.isPrimaryForWork);
+  const workRanges = readerState.readRanges.filter(
+    (range) => range.workId === currentWork.id,
+  );
+  const workBookmarks = readerState.bookmarks.filter(
+    (bookmark) => bookmark.workId === currentWork.id,
+  );
+  const segments = useMemo(() => createProgressSegments(currentWork), [currentWork]);
+  const progress = percentRead(currentWork, workRanges);
+  const primaryBookmark =
+    workBookmarks.find((bookmark) => bookmark.isPrimaryForWork) ?? workBookmarks[0];
 
   useEffect(() => {
     loadReaderState().then((state) => {
       setReaderState(state);
-      if (state.lastPosition) {
-        setCurrentPosition(state.lastPosition);
-      } else if (state.bookmarks[0]) {
-        setCurrentPosition(state.bookmarks[0].position);
+      const latest = state.lastPosition;
+      if (latest?.workId === currentWork.id) {
+        setCurrentPosition(latest);
       }
     });
-  }, []);
+  }, [currentWork.id]);
 
   const persist = (nextState: ReaderState) => {
     setReaderState(nextState);
@@ -74,28 +96,50 @@ function SutraReaderApp() {
     setScreen("reader");
   };
 
+  const openCatalogItem = async (item: CbetaCatalogItem) => {
+    setLoadingMessage(`Loading ${item.title}`);
+    try {
+      const work = await loadCbetaWork(item);
+      setCurrentWork(work);
+      const bookmark = readerState.bookmarks.find((candidate) => candidate.workId === work.id);
+      const start = bookmark?.position ?? offsetToPosition(work, 0);
+      setCurrentPosition(start);
+      persist({ ...readerState, lastPosition: start });
+      setScreen("home");
+    } catch (error) {
+      setLoadingMessage(
+        error instanceof Error ? error.message : "Unable to load this CBETA work",
+      );
+      return;
+    }
+    setLoadingMessage(undefined);
+  };
+
   const startSession = () => {
     persist({ ...readerState, activeSessionStart: currentPosition });
   };
 
   const markHere = () => {
-    const start = readerState.activeSessionStart ?? primaryBookmark?.position ?? currentPosition;
-    const range = createReadRange(sampleSutra, start, currentPosition);
-    const bookmark = createBookmark(currentPosition, true);
-    const nextState = {
+    const activeStart =
+      readerState.activeSessionStart?.workId === currentWork.id
+        ? readerState.activeSessionStart
+        : undefined;
+    const start = activeStart ?? primaryBookmark?.position ?? currentPosition;
+    const range = createReadRange(currentWork, start, currentPosition);
+    const bookmark = createBookmark(currentWork, currentPosition, true);
+
+    persist({
       ...readerState,
       activeSessionStart: undefined,
       lastPosition: currentPosition,
       readRanges: [...readerState.readRanges, range],
       bookmarks: upsertPrimaryBookmark(readerState.bookmarks, bookmark),
-    };
-
-    persist(nextState);
+    });
     setScreen("home");
   };
 
   const saveBookmark = () => {
-    const bookmark = createBookmark(currentPosition, false);
+    const bookmark = createBookmark(currentWork, currentPosition, false);
     persist({
       ...readerState,
       lastPosition: currentPosition,
@@ -105,7 +149,8 @@ function SutraReaderApp() {
 
   const resetProgress = () => {
     const nextState = { bookmarks: [], readRanges: [] };
-    setCurrentPosition(offsetToPosition(sampleSutra, 0));
+    const start = offsetToPosition(currentWork, 0);
+    setCurrentPosition(start);
     setReaderState(nextState);
     resetReaderState();
   };
@@ -116,30 +161,45 @@ function SutraReaderApp() {
       {screen === "home" ? (
         <HomeScreen
           theme={theme}
+          currentWork={currentWork}
           segments={segments}
           readerState={readerState}
+          workRanges={workRanges}
           progress={progress}
+          loadingMessage={loadingMessage}
+          onOpenLibrary={() => setScreen("library")}
           onOpenOutline={() => setScreen("outline")}
           onContinue={() =>
             openReaderAt(primaryBookmark?.position ?? readerState.lastPosition ?? currentPosition)
           }
           onOpenSegment={(segment) =>
-            openReaderAt(offsetToPosition(sampleSutra, segment.startOffset))
+            openReaderAt(offsetToPosition(currentWork, segment.startOffset))
           }
+          onLoadDefault={() => openCatalogItem(defaultCatalogItem)}
           onReset={resetProgress}
+        />
+      ) : null}
+      {screen === "library" ? (
+        <LibraryScreen
+          theme={theme}
+          loadingMessage={loadingMessage}
+          onBack={() => setScreen("home")}
+          onOpen={openCatalogItem}
         />
       ) : null}
       {screen === "outline" ? (
         <OutlineScreen
           theme={theme}
+          work={currentWork}
           readerState={readerState}
           onBack={() => setScreen("home")}
-          onOpen={(position) => openReaderAt(position)}
+          onOpen={openReaderAt}
         />
       ) : null}
       {screen === "reader" ? (
         <ReaderScreen
           theme={theme}
+          work={currentWork}
           position={currentPosition}
           readerState={readerState}
           onBack={() => setScreen("home")}
@@ -158,43 +218,63 @@ function SutraReaderApp() {
 
 function HomeScreen({
   theme,
+  currentWork,
   segments,
   readerState,
+  workRanges,
   progress,
+  loadingMessage,
+  onOpenLibrary,
   onOpenOutline,
   onContinue,
   onOpenSegment,
+  onLoadDefault,
   onReset,
 }: {
   theme: Theme;
+  currentWork: SutraWork;
   segments: ProgressSegment[];
   readerState: ReaderState;
+  workRanges: ReaderState["readRanges"];
   progress: number;
+  loadingMessage?: string;
+  onOpenLibrary: () => void;
   onOpenOutline: () => void;
   onContinue: () => void;
   onOpenSegment: (segment: ProgressSegment) => void;
+  onLoadDefault: () => void;
   onReset: () => void;
 }) {
+  const workBookmarks = readerState.bookmarks.filter(
+    (bookmark) => bookmark.workId === currentWork.id,
+  );
+
   return (
     <View style={styles.screen}>
       <View style={styles.headerRow}>
-        <View>
+        <View style={styles.headerCopy}>
           <Text style={[styles.appTitle, { color: theme.text }]}>Sutra Reader</Text>
-          <Text style={[styles.subtitle, { color: theme.muted }]}>{sampleSutra.title}</Text>
+          <Text style={[styles.subtitle, { color: theme.muted }]} numberOfLines={2}>
+            {currentWork.title}
+          </Text>
         </View>
         <Text style={[styles.percent, { color: theme.accent }]}>
           {Math.round(progress * 100)}%
         </Text>
       </View>
 
+      <Text style={[styles.catalogMeta, { color: theme.muted }]}>
+        CBETA library: {cbetaCatalog.length.toLocaleString()} works available
+      </Text>
+
       <View style={styles.mapGrid}>
         {segments.map((segment) => (
           <ProgressDot
             key={segment.id}
             theme={theme}
-            fraction={segmentReadFraction(sampleSutra, segment, readerState.readRanges)}
-            bookmarked={readerState.bookmarks.some((bookmark) => {
-              const offset = positionToOffset(sampleSutra, bookmark.position);
+            fraction={segmentReadFraction(currentWork, segment, workRanges)}
+            bookmarked={workBookmarks.some((bookmark) => {
+              const offset = positionToOffset(currentWork, bookmark.position);
               return offset >= segment.startOffset && offset < segment.endOffset;
             })}
             label={segment.label}
@@ -205,20 +285,39 @@ function HomeScreen({
 
       <View style={styles.actionRow}>
         <Button label="Continue" theme={theme} filled onPress={onContinue} />
+        <Button label="Library" theme={theme} onPress={onOpenLibrary} />
         <Button label="Outline" theme={theme} onPress={onOpenOutline} />
       </View>
 
+      {currentWork.id === sampleSutra.id ? (
+        <Pressable onPress={onLoadDefault} style={styles.notice}>
+          <Text style={[styles.noticeText, { color: theme.accent }]}>
+            Download the first CBETA work to replace sample content.
+          </Text>
+        </Pressable>
+      ) : null}
+
+      {loadingMessage ? (
+        <Text style={[styles.loadingText, { color: theme.accent }]}>{loadingMessage}</Text>
+      ) : null}
+
       <View style={styles.panel}>
         <Text style={[styles.panelTitle, { color: theme.text }]}>Active bookmarks</Text>
-        {readerState.bookmarks.slice(0, 4).map((bookmark) => (
+        {workBookmarks.slice(0, 4).map((bookmark) => (
           <Text key={bookmark.id} style={[styles.bookmark, { color: theme.muted }]}>
             {bookmark.title}
           </Text>
         ))}
-        {readerState.bookmarks.length === 0 ? (
+        {workBookmarks.length === 0 ? (
           <Text style={[styles.bookmark, { color: theme.muted }]}>No bookmarks yet</Text>
         ) : null}
       </View>
+
+      {currentWork.sourceAttribution ? (
+        <Text style={[styles.sourceText, { color: theme.muted }]}>
+          {currentWork.sourceAttribution}
+        </Text>
+      ) : null}
 
       <Pressable onPress={onReset} style={styles.resetButton}>
         <Text style={[styles.resetText, { color: theme.muted }]}>Reset local progress</Text>
@@ -227,45 +326,128 @@ function HomeScreen({
   );
 }
 
+function LibraryScreen({
+  theme,
+  loadingMessage,
+  onBack,
+  onOpen,
+}: {
+  theme: Theme;
+  loadingMessage?: string;
+  onBack: () => void;
+  onOpen: (item: CbetaCatalogItem) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [cachedIds, setCachedIds] = useState<Record<string, boolean>>({});
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const items = needle
+      ? cbetaCatalog.filter((item) =>
+          `${item.title} ${item.sourceId} ${item.canonTitle} ${item.path}`
+            .toLowerCase()
+            .includes(needle),
+        )
+      : cbetaCatalog;
+    return items.slice(0, 160);
+  }, [query]);
+
+  useEffect(() => {
+    Promise.all(
+      filtered.slice(0, 40).map(async (item) => [item.id, await isCbetaWorkCached(item)] as const),
+    ).then((pairs) => {
+      setCachedIds(Object.fromEntries(pairs));
+    });
+  }, [filtered]);
+
+  return (
+    <View style={styles.screen}>
+      <TopBar theme={theme} title="CBETA Library" onBack={onBack} />
+      <TextInput
+        value={query}
+        onChangeText={setQuery}
+        placeholder="Search title, canon, or source id"
+        placeholderTextColor={theme.muted}
+        autoCapitalize="none"
+        style={[
+          styles.searchInput,
+          { borderColor: theme.border, color: theme.text, backgroundColor: theme.input },
+        ]}
+      />
+      <Text style={[styles.catalogMeta, { color: theme.muted }]}>
+        Showing {filtered.length} of {cbetaCatalog.length.toLocaleString()} works. Tap to download
+        and cache for offline reading.
+      </Text>
+      {loadingMessage ? (
+        <Text style={[styles.loadingText, { color: theme.accent }]}>{loadingMessage}</Text>
+      ) : null}
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {filtered.map((item) => (
+          <Pressable
+            key={item.path}
+            onPress={() => onOpen(item)}
+            style={[styles.libraryRow, { borderColor: theme.border }]}
+          >
+            <View style={styles.libraryText}>
+              <Text style={[styles.outlineTitle, { color: theme.text }]} numberOfLines={1}>
+                {item.title}
+              </Text>
+              <Text style={[styles.outlineMeta, { color: theme.muted }]} numberOfLines={1}>
+                {item.canonTitle} - {item.volume} - {item.sourceId}
+              </Text>
+            </View>
+            <Text style={[styles.cacheBadge, { color: theme.accent }]}>
+              {cachedIds[item.id] ? "Cached" : "Get"}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
 function OutlineScreen({
   theme,
+  work,
   readerState,
   onBack,
   onOpen,
 }: {
   theme: Theme;
+  work: SutraWork;
   readerState: ReaderState;
   onBack: () => void;
   onOpen: (position: ReadingPosition) => void;
 }) {
+  const workRanges = readerState.readRanges.filter((range) => range.workId === work.id);
+
   return (
     <View style={styles.screen}>
       <TopBar theme={theme} title="Outline" onBack={onBack} />
       <ScrollView showsVerticalScrollIndicator={false}>
-        {sampleSutra.sections.map((section) => {
-          const firstBlock = sampleSutra.blocks.find((block) => block.id === section.blockIds[0]);
-          const sectionStart = firstBlock ? makePosition(sampleSutra.id, firstBlock, 0, 0) : null;
-          const sectionOffsets = section.blockIds.map((blockId) =>
-            positionToOffset(sampleSutra, offsetToPosition(sampleSutra, blockStart(blockId))),
-          );
-          const startOffset = Math.min(...sectionOffsets);
-          const endOffset = Math.max(
-            ...section.blockIds.map((blockId) => {
-              const block = sampleSutra.blocks.find((item) => item.id === blockId);
-              return block ? blockStart(blockId) + block.textSimplified.length : 0;
-            }),
-          );
+        {work.sections.map((section) => {
+          const firstBlock = work.blocks.find((block) => block.id === section.blockIds[0]);
+          const sectionStart = firstBlock ? makePosition(work.id, firstBlock, 0, 0) : null;
+          const offsets = section.blockIds.flatMap((blockId) => {
+            const block = work.blocks.find((item) => item.id === blockId);
+            if (!block) {
+              return [];
+            }
+            const start = positionToOffset(work, makePosition(work.id, block, 0, 0));
+            return [start, start + block.textSimplified.length];
+          });
+          const startOffset = offsets.length ? Math.min(...offsets) : 0;
+          const endOffset = offsets.length ? Math.max(...offsets) : 0;
           const fraction = segmentReadFraction(
-            sampleSutra,
+            work,
             {
               id: section.id,
-              workId: sampleSutra.id,
+              workId: work.id,
               order: section.order,
               startOffset,
               endOffset,
               label: section.title,
             },
-            readerState.readRanges,
+            workRanges,
           );
 
           return (
@@ -275,10 +457,12 @@ function OutlineScreen({
               onPress={() => sectionStart && onOpen(sectionStart)}
               style={[styles.outlineRow, { borderColor: theme.border }]}
             >
-              <View>
-                <Text style={[styles.outlineTitle, { color: theme.text }]}>{section.title}</Text>
+              <View style={styles.libraryText}>
+                <Text style={[styles.outlineTitle, { color: theme.text }]} numberOfLines={1}>
+                  {section.title}
+                </Text>
                 <Text style={[styles.outlineMeta, { color: theme.muted }]}>
-                  {Math.round(fraction * 100)}% read
+                  {section.blockIds.length} blocks - {Math.round(fraction * 100)}% read
                 </Text>
               </View>
               <MiniBar theme={theme} fraction={fraction} />
@@ -292,6 +476,7 @@ function OutlineScreen({
 
 function ReaderScreen({
   theme,
+  work,
   position,
   readerState,
   onBack,
@@ -301,6 +486,7 @@ function ReaderScreen({
   onBookmark,
 }: {
   theme: Theme;
+  work: SutraWork;
   position: ReadingPosition;
   readerState: ReaderState;
   onBack: () => void;
@@ -309,31 +495,36 @@ function ReaderScreen({
   onMarkHere: () => void;
   onBookmark: () => void;
 }) {
-  const activeBlock = sampleSutra.blocks.find((block) => block.id === position.textBlockId);
+  const activeBlock = work.blocks.find((block) => block.id === position.textBlockId);
+  const sessionActive = readerState.activeSessionStart?.workId === work.id;
 
   return (
     <View style={styles.screen}>
-      <TopBar theme={theme} title={sampleSutra.title} onBack={onBack} />
-      <Text style={[styles.readerSubhead, { color: theme.muted }]}>{sampleSutra.subtitle}</Text>
+      <TopBar theme={theme} title={work.title} onBack={onBack} />
+      <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={2}>
+        {work.subtitle}
+      </Text>
 
-      <ScrollView
+      <FlatList
+        data={work.blocks}
+        keyExtractor={(block) => block.id}
         showsVerticalScrollIndicator={false}
         onScroll={(event) => {
           const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
           const scrollable = Math.max(1, contentSize.height - layoutMeasurement.height);
           const fraction = Math.max(0, Math.min(contentOffset.y / scrollable, 1));
-          onPositionChange(offsetToPosition(sampleSutra, Math.floor(totalChars(sampleSutra) * fraction), fraction));
+          onPositionChange(
+            offsetToPosition(work, Math.floor(totalChars(work) * fraction), fraction),
+          );
         }}
-        scrollEventThrottle={250}
+        scrollEventThrottle={350}
         style={styles.readerScroll}
-      >
-        {sampleSutra.blocks.map((block) => (
+        renderItem={({ item: block }) => (
           <Pressable
-            key={block.id}
             onPress={() =>
               onPositionChange(
                 makePosition(
-                  sampleSutra.id,
+                  work.id,
                   block,
                   Math.floor(block.textSimplified.length / 2),
                   position.scrollFraction,
@@ -354,12 +545,12 @@ function ReaderScreen({
               {block.textSimplified}
             </Text>
           </Pressable>
-        ))}
-      </ScrollView>
+        )}
+      />
 
       <View style={[styles.readerFooter, { borderColor: theme.border }]}>
         <Text style={[styles.sessionText, { color: theme.muted }]}>
-          {readerState.activeSessionStart ? "Session active" : "Ready"}
+          {sessionActive ? "Session active" : "Ready"}
         </Text>
         <View style={styles.readerActions}>
           <Button label="Start" theme={theme} onPress={onStart} />
@@ -474,16 +665,20 @@ function MiniBar({ theme, fraction }: { theme: Theme; fraction: number }) {
   );
 }
 
-function createBookmark(position: ReadingPosition, primary: boolean): Bookmark {
-  const block = sampleSutra.blocks.find((item) => item.id === position.textBlockId);
-  const section = sampleSutra.sections.find((item) => item.id === block?.sectionId);
+function createBookmark(
+  work: SutraWork,
+  position: ReadingPosition,
+  primary: boolean,
+): Bookmark {
+  const block = work.blocks.find((item) => item.id === position.textBlockId);
+  const section = work.sections.find((item) => item.id === block?.sectionId);
   const now = new Date().toISOString();
 
   return {
     id: makeId(),
-    workId: sampleSutra.id,
+    workId: work.id,
     position,
-    title: `${sampleSutra.title} - ${section?.title ?? sampleSutra.subtitle}`,
+    title: `${work.title} - ${section?.title ?? work.subtitle}`,
     isPrimaryForWork: primary,
     createdAt: now,
     updatedAt: now,
@@ -493,22 +688,13 @@ function createBookmark(position: ReadingPosition, primary: boolean): Bookmark {
 function upsertPrimaryBookmark(bookmarks: Bookmark[], bookmark: Bookmark) {
   return [
     bookmark,
-    ...bookmarks.map((item) => ({ ...item, isPrimaryForWork: false })).slice(0, 20),
+    ...bookmarks
+      .map((item) =>
+        item.workId === bookmark.workId ? { ...item, isPrimaryForWork: false } : item,
+      )
+      .slice(0, 40),
   ];
 }
-
-function blockStart(blockId: string) {
-  let offset = 0;
-  for (const block of sampleSutra.blocks) {
-    if (block.id === blockId) {
-      return offset;
-    }
-    offset += block.textSimplified.length;
-  }
-  return offset;
-}
-
-type Theme = typeof lightTheme;
 
 const lightTheme = {
   background: "#faf8f2",
@@ -519,6 +705,7 @@ const lightTheme = {
   onAccent: "#fffaf0",
   partial: "#b08968",
   dot: "#d8d0c2",
+  input: "#fffdf7",
   selection: "#efe4d2",
 };
 
@@ -531,6 +718,7 @@ const darkTheme = {
   onAccent: "#1e160f",
   partial: "#a98467",
   dot: "#4a4237",
+  input: "#211e19",
   selection: "#2c261f",
 };
 
@@ -547,7 +735,11 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 28,
+    marginBottom: 12,
+  },
+  headerCopy: {
+    flex: 1,
+    paddingRight: 12,
   },
   appTitle: {
     fontSize: 31,
@@ -558,6 +750,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 24,
     marginTop: 4,
+  },
+  catalogMeta: {
+    fontSize: 13,
+    lineHeight: 20,
+    marginBottom: 16,
   },
   percent: {
     fontSize: 28,
@@ -587,8 +784,9 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     flexDirection: "row",
-    gap: 12,
-    marginTop: 30,
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 26,
   },
   button: {
     alignItems: "center",
@@ -596,14 +794,28 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     minHeight: 44,
     justifyContent: "center",
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
   },
   buttonText: {
     fontSize: 15,
     fontWeight: "700",
   },
+  notice: {
+    marginTop: 16,
+  },
+  noticeText: {
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 20,
+  },
+  loadingText: {
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginBottom: 8,
+  },
   panel: {
-    marginTop: 28,
+    marginTop: 24,
   },
   panelTitle: {
     fontSize: 17,
@@ -613,6 +825,11 @@ const styles = StyleSheet.create({
   bookmark: {
     fontSize: 15,
     lineHeight: 24,
+  },
+  sourceText: {
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 18,
   },
   resetButton: {
     marginTop: "auto",
@@ -642,6 +859,29 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textAlign: "center",
   },
+  searchInput: {
+    borderRadius: 8,
+    borderWidth: 1,
+    fontSize: 16,
+    marginBottom: 10,
+    minHeight: 46,
+    paddingHorizontal: 12,
+  },
+  libraryRow: {
+    alignItems: "center",
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    minHeight: 70,
+    paddingVertical: 12,
+  },
+  libraryText: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  cacheBadge: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
   outlineRow: {
     alignItems: "center",
     borderBottomWidth: 1,
@@ -651,7 +891,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   outlineTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "700",
   },
   outlineMeta: {
@@ -703,6 +943,7 @@ const styles = StyleSheet.create({
   },
   readerActions: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     justifyContent: "center",
     paddingBottom: 8,

@@ -21,8 +21,31 @@ export type SutraWork = {
   id: string;
   title: string;
   subtitle: string;
+  sourcePath?: string;
+  sourceUrl?: string;
+  sourceAttribution?: string;
   sections: SutraSection[];
   blocks: TextBlock[];
+};
+
+export type CbetaCanon = {
+  title: string;
+  "title-zh": string;
+  "short-title-zh": string;
+  abbreviation: string;
+  volumes: number;
+};
+
+export type CbetaCatalogItem = {
+  id: string;
+  sourceId: string;
+  canon: string;
+  canonTitle: string;
+  volume: string;
+  number: string;
+  title: string;
+  path: string;
+  rawUrl: string;
 };
 
 export type ReadingPosition = {
