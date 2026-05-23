@@ -350,7 +350,7 @@ function LibraryScreen({
   theme: Theme;
   loadingMessage?: string;
   onBack: () => void;
-  onOpen: (item: CbetaCatalogItem) => void;
+  onOpen: (item: CbetaCatalogItem, destination?: Screen) => void;
 }) {
   const [query, setQuery] = useState("");
   const [cachedIds, setCachedIds] = useState<Record<string, boolean>>({});
@@ -387,8 +387,8 @@ function LibraryScreen({
         ]}
       />
       <Text style={[styles.catalogMeta, { color: theme.muted }]}>
-        Showing {filtered.length} of {cbetaCatalog.length.toLocaleString()} works. Tap to download
-        and cache for offline reading.
+        Showing {filtered.length} of {cbetaCatalog.length.toLocaleString()} works. Tap a sutra to
+        open and cache it for offline reading.
       </Text>
       {loadingMessage ? (
         <Text style={[styles.loadingText, { color: theme.accent }]}>{loadingMessage}</Text>
@@ -397,7 +397,7 @@ function LibraryScreen({
         {filtered.map((item) => (
           <Pressable
             key={item.path}
-            onPress={() => onOpen(item)}
+            onPress={() => onOpen(item, "reader")}
             style={[styles.libraryRow, { borderColor: theme.border }]}
           >
             <View style={styles.libraryText}>
@@ -409,7 +409,7 @@ function LibraryScreen({
               </Text>
             </View>
             <Text style={[styles.cacheBadge, { color: theme.accent }]}>
-              {cachedIds[item.id] ? "Cached" : "Get"}
+              {cachedIds[item.id] ? "Read" : "Open"}
             </Text>
           </Pressable>
         ))}
