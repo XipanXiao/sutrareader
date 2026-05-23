@@ -355,12 +355,10 @@ function LibraryScreen({
   const [query, setQuery] = useState("");
   const [cachedIds, setCachedIds] = useState<Record<string, boolean>>({});
   const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
+    const needle = normalizeSearchText(query);
     const items = needle
       ? cbetaCatalog.filter((item) =>
-          `${item.title} ${item.sourceId} ${item.canonTitle} ${item.path}`
-            .toLowerCase()
-            .includes(needle),
+          (item.searchText ?? normalizeSearchText(catalogSearchText(item))).includes(needle),
         )
       : cbetaCatalog;
     return items.slice(0, 160);
@@ -404,10 +402,10 @@ function LibraryScreen({
           >
             <View style={styles.libraryText}>
               <Text style={[styles.outlineTitle, { color: theme.text }]} numberOfLines={1}>
-                {item.title}
+                {item.titleSimplified ?? item.title}
               </Text>
               <Text style={[styles.outlineMeta, { color: theme.muted }]} numberOfLines={1}>
-                {item.canonTitle} - {item.volume} - {item.sourceId}
+                {item.canonTitleSimplified ?? item.canonTitle} - {item.volume} - {item.sourceId}
               </Text>
             </View>
             <Text style={[styles.cacheBadge, { color: theme.accent }]}>
@@ -809,6 +807,26 @@ function formatPercent(value: number) {
   }
 
   return `${(value * 100).toFixed(value < 0.01 ? 1 : 0)}%`;
+}
+
+function normalizeSearchText(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function catalogSearchText(item: CbetaCatalogItem) {
+  return [
+    item.title,
+    item.titleSimplified,
+    item.canonTitle,
+    item.canonTitleSimplified,
+    item.sourceId,
+    item.canon,
+    item.volume,
+    item.number,
+    item.path,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function createBookmark(

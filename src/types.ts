@@ -44,6 +44,9 @@ export type CbetaCatalogItem = {
   volume: string;
   number: string;
   title: string;
+  titleSimplified?: string;
+  canonTitleSimplified?: string;
+  searchText?: string;
   path: string;
   rawUrl: string;
 };
