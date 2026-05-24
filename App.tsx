@@ -410,15 +410,21 @@ function HomeScreen({
 
       <View style={styles.panel}>
         <Text style={[styles.panelTitle, { color: theme.text }]}>书签</Text>
-        {activeBookmarks.slice(0, 4).map((bookmark) => (
-          <BookmarkRow
-            key={bookmark.id}
-            bookmark={bookmark}
-            theme={theme}
-            onOpen={onOpenBookmark}
-            onDelete={onDeleteBookmark}
-          />
-        ))}
+        <ScrollView
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={activeBookmarks.length > 4}
+          style={activeBookmarks.length > 4 ? styles.bookmarkList : null}
+        >
+          {activeBookmarks.map((bookmark) => (
+            <BookmarkRow
+              key={bookmark.id}
+              bookmark={bookmark}
+              theme={theme}
+              onOpen={onOpenBookmark}
+              onDelete={onDeleteBookmark}
+            />
+          ))}
+        </ScrollView>
         {activeBookmarks.length === 0 ? (
           <Text style={[styles.bookmark, { color: theme.muted }]}>暂无书签</Text>
         ) : null}
@@ -448,7 +454,7 @@ function BookmarkRow({
   onOpen: (bookmark: Bookmark) => void;
   onDelete: (bookmark: Bookmark) => void;
 }) {
-  const deleteWidth = 82;
+  const deleteWidth = 88;
   const translateX = useRef(new Animated.Value(0)).current;
 
   const close = () => {
@@ -468,13 +474,15 @@ function BookmarkRow({
   const panResponder = useMemo(
     () =>
       PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+          gesture.dx < -4 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.75,
         onMoveShouldSetPanResponder: (_event, gesture) =>
-          Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+          gesture.dx < -4 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.75,
         onPanResponderMove: (_event, gesture) => {
           translateX.setValue(Math.max(-deleteWidth, Math.min(0, gesture.dx)));
         },
         onPanResponderRelease: (_event, gesture) => {
-          if (gesture.dx < -deleteWidth / 2) {
+          if (gesture.dx < -24 || gesture.vx < -0.35) {
             revealDelete();
           } else {
             close();
@@ -1304,6 +1312,9 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     lineHeight: 24,
+  },
+  bookmarkList: {
+    maxHeight: 260,
   },
   bookmarkSwipeRow: {
     borderBottomWidth: 1,
