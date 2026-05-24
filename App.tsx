@@ -1,8 +1,10 @@
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
   Pressable,
   FlatList,
+  PanResponder,
   ScrollView,
   StyleSheet,
   Text,
@@ -409,27 +411,13 @@ function HomeScreen({
       <View style={styles.panel}>
         <Text style={[styles.panelTitle, { color: theme.text }]}>Active bookmarks</Text>
         {activeBookmarks.slice(0, 4).map((bookmark) => (
-          <View key={bookmark.id} style={[styles.bookmarkRow, { borderColor: theme.border }]}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Open bookmark ${bookmark.title}`}
-              onPress={() => onOpenBookmark(bookmark)}
-              style={styles.bookmarkOpenTarget}
-            >
-              <Text style={[styles.bookmark, { color: theme.muted }]} numberOfLines={2}>
-                {bookmark.title}
-              </Text>
-              <Text style={[styles.bookmarkAction, { color: theme.accent }]}>Open</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Delete bookmark ${bookmark.title}`}
-              onPress={() => onDeleteBookmark(bookmark)}
-              style={styles.bookmarkDeleteTarget}
-            >
-              <Text style={[styles.bookmarkDeleteText, { color: theme.muted }]}>Delete</Text>
-            </Pressable>
-          </View>
+          <BookmarkRow
+            key={bookmark.id}
+            bookmark={bookmark}
+            theme={theme}
+            onOpen={onOpenBookmark}
+            onDelete={onDeleteBookmark}
+          />
         ))}
         {activeBookmarks.length === 0 ? (
           <Text style={[styles.bookmark, { color: theme.muted }]}>No bookmarks yet</Text>
@@ -446,6 +434,93 @@ function HomeScreen({
         <Text style={[styles.resetText, { color: theme.muted }]}>Reset local progress</Text>
       </Pressable>
     </ScrollView>
+  );
+}
+
+function BookmarkRow({
+  bookmark,
+  theme,
+  onOpen,
+  onDelete,
+}: {
+  bookmark: Bookmark;
+  theme: Theme;
+  onOpen: (bookmark: Bookmark) => void;
+  onDelete: (bookmark: Bookmark) => void;
+}) {
+  const deleteWidth = 82;
+  const translateX = useRef(new Animated.Value(0)).current;
+
+  const close = () => {
+    Animated.spring(translateX, {
+      toValue: 0,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const revealDelete = () => {
+    Animated.spring(translateX, {
+      toValue: -deleteWidth,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+        onPanResponderMove: (_event, gesture) => {
+          translateX.setValue(Math.max(-deleteWidth, Math.min(0, gesture.dx)));
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dx < -deleteWidth / 2) {
+            revealDelete();
+          } else {
+            close();
+          }
+        },
+        onPanResponderTerminate: close,
+      }),
+    [translateX],
+  );
+
+  return (
+    <View style={[styles.bookmarkSwipeRow, { borderColor: theme.border }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Delete bookmark ${bookmark.title}`}
+        onPress={() => onDelete(bookmark)}
+        style={[
+          styles.bookmarkDeleteConfirm,
+          { backgroundColor: theme.deleteBackground, width: deleteWidth },
+        ]}
+      >
+        <Text style={[styles.bookmarkDeleteText, { color: theme.onDelete }]}>Delete</Text>
+      </Pressable>
+      <Animated.View
+        {...panResponder.panHandlers}
+        style={[
+          styles.bookmarkSwipeContent,
+          { backgroundColor: theme.background, transform: [{ translateX }] },
+        ]}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open bookmark ${bookmark.title}`}
+          onPress={() => {
+            close();
+            onOpen(bookmark);
+          }}
+          style={styles.bookmarkOpenTarget}
+        >
+          <Text style={[styles.bookmark, { color: theme.muted }]} numberOfLines={2}>
+            {bookmark.title}
+          </Text>
+          <Text style={[styles.bookmarkAction, { color: theme.accent }]}>Open</Text>
+        </Pressable>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -1082,6 +1157,8 @@ const lightTheme = {
   border: "#ddd6c8",
   accent: "#7f5539",
   onAccent: "#fffaf0",
+  deleteBackground: "#b42318",
+  onDelete: "#fffaf0",
   partial: "#b08968",
   dot: "#d8d0c2",
   input: "#fffdf7",
@@ -1095,6 +1172,8 @@ const darkTheme = {
   border: "#39342c",
   accent: "#d6a36f",
   onAccent: "#1e160f",
+  deleteBackground: "#d92d20",
+  onDelete: "#fffaf0",
   partial: "#a98467",
   dot: "#4a4237",
   input: "#211e19",
@@ -1209,11 +1288,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 24,
   },
-  bookmarkRow: {
-    alignItems: "center",
+  bookmarkSwipeRow: {
     borderBottomWidth: 1,
-    flexDirection: "row",
     minHeight: 44,
+    overflow: "hidden",
+    position: "relative",
+  },
+  bookmarkSwipeContent: {
+    minHeight: 60,
+    justifyContent: "center",
     paddingVertical: 8,
   },
   bookmarkOpenTarget: {
@@ -1227,10 +1310,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
   },
-  bookmarkDeleteTarget: {
+  bookmarkDeleteConfirm: {
+    alignItems: "center",
+    bottom: 0,
     justifyContent: "center",
-    minHeight: 44,
-    paddingLeft: 14,
+    position: "absolute",
+    right: 0,
+    top: 0,
   },
   bookmarkDeleteText: {
     fontSize: 13,
