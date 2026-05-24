@@ -124,7 +124,7 @@ function SutraReaderApp() {
   };
 
   const openCatalogItem = async (item: CbetaCatalogItem, destination: Screen = "home") => {
-    setLoadingMessage(`Loading ${item.title}`);
+    setLoadingMessage(`正在载入《${item.titleSimplified ?? item.title}》`);
     try {
       const work = await loadCbetaWork(item);
       setCurrentWork(work);
@@ -138,7 +138,7 @@ function SutraReaderApp() {
       setScreen(destination);
     } catch (error) {
       setLoadingMessage(
-        error instanceof Error ? error.message : "Unable to load this CBETA work",
+        error instanceof Error ? error.message : "无法载入这部 CBETA 文献",
       );
       return;
     }
@@ -153,11 +153,11 @@ function SutraReaderApp() {
 
     const item = cbetaCatalog.find((candidate) => candidate.id === bookmark.workId);
     if (!item) {
-      setLoadingMessage("Unable to find the bookmarked sutra in the library");
+      setLoadingMessage("无法在经藏中找到这个书签对应的经文");
       return;
     }
 
-    setLoadingMessage(`Loading ${item.title}`);
+    setLoadingMessage(`正在载入《${item.titleSimplified ?? item.title}》`);
     try {
       const work = await loadCbetaWork(item);
       setCurrentWork(work);
@@ -167,7 +167,7 @@ function SutraReaderApp() {
       setScreen("reader");
     } catch (error) {
       setLoadingMessage(
-        error instanceof Error ? error.message : "Unable to load this bookmarked sutra",
+        error instanceof Error ? error.message : "无法载入这个书签对应的经文",
       );
       return;
     }
@@ -230,7 +230,7 @@ function SutraReaderApp() {
 
   const saveBookmark = () => {
     if (completedWorkIds.has(currentWork.id)) {
-      setLoadingMessage("This sutra is already finished; progress remains saved.");
+      setLoadingMessage("这部经已经读完，进度仍会保留。");
       return;
     }
 
@@ -359,9 +359,9 @@ function HomeScreen({
     >
       <View style={styles.headerRow}>
         <View style={styles.headerCopy}>
-          <Text style={[styles.appTitle, { color: theme.text }]}>Sutra Reader</Text>
+          <Text style={[styles.appTitle, { color: theme.text }]}>阅藏</Text>
           <Text style={[styles.subtitle, { color: theme.muted }]} numberOfLines={2}>
-            Whole Sutra Sea
+            深入经藏，智慧如海
           </Text>
         </View>
         <Text style={[styles.percent, { color: theme.accent }]}>
@@ -370,9 +370,9 @@ function HomeScreen({
       </View>
 
       <Text style={[styles.catalogMeta, { color: theme.muted }]}>
-        {globalProgress.completedWorks.toLocaleString()} of{" "}
-        {cbetaCatalog.length.toLocaleString()} works completed. Current: {currentWork.title} (
-        {Math.round(currentWorkProgress * 100)}%).
+        已读完 {globalProgress.completedWorks.toLocaleString()} /{" "}
+        {cbetaCatalog.length.toLocaleString()} 部。当前：{currentWork.title}（
+        {Math.round(currentWorkProgress * 100)}%）。
       </Text>
 
       <View style={styles.mapGrid}>
@@ -391,15 +391,15 @@ function HomeScreen({
       </View>
 
       <View style={styles.actionRow}>
-        <Button label="Continue" theme={theme} filled onPress={onContinue} />
-        <Button label="Library" theme={theme} onPress={onOpenLibrary} />
-        <Button label="Outline" theme={theme} onPress={onOpenOutline} />
+        <Button label="继续" theme={theme} filled onPress={onContinue} />
+        <Button label="经藏" theme={theme} onPress={onOpenLibrary} />
+        <Button label="目录" theme={theme} onPress={onOpenOutline} />
       </View>
 
       {currentWork.id === sampleSutra.id ? (
         <Pressable onPress={onLoadDefault} style={styles.notice}>
           <Text style={[styles.noticeText, { color: theme.accent }]}>
-            Download the first CBETA work to replace sample content.
+            下载第一部 CBETA 文献以替换示例内容。
           </Text>
         </Pressable>
       ) : null}
@@ -409,7 +409,7 @@ function HomeScreen({
       ) : null}
 
       <View style={styles.panel}>
-        <Text style={[styles.panelTitle, { color: theme.text }]}>Active bookmarks</Text>
+        <Text style={[styles.panelTitle, { color: theme.text }]}>书签</Text>
         {activeBookmarks.slice(0, 4).map((bookmark) => (
           <BookmarkRow
             key={bookmark.id}
@@ -420,7 +420,7 @@ function HomeScreen({
           />
         ))}
         {activeBookmarks.length === 0 ? (
-          <Text style={[styles.bookmark, { color: theme.muted }]}>No bookmarks yet</Text>
+          <Text style={[styles.bookmark, { color: theme.muted }]}>暂无书签</Text>
         ) : null}
       </View>
 
@@ -431,7 +431,7 @@ function HomeScreen({
       ) : null}
 
       <Pressable onPress={onReset} style={styles.resetButton}>
-        <Text style={[styles.resetText, { color: theme.muted }]}>Reset local progress</Text>
+        <Text style={[styles.resetText, { color: theme.muted }]}>清除本机进度</Text>
       </Pressable>
     </ScrollView>
   );
@@ -489,14 +489,14 @@ function BookmarkRow({
     <View style={[styles.bookmarkSwipeRow, { borderColor: theme.border }]}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Delete bookmark ${bookmark.title}`}
+        accessibilityLabel={`删除书签 ${bookmark.title}`}
         onPress={() => onDelete(bookmark)}
         style={[
           styles.bookmarkDeleteConfirm,
           { backgroundColor: theme.deleteBackground, width: deleteWidth },
         ]}
       >
-        <Text style={[styles.bookmarkDeleteText, { color: theme.onDelete }]}>Delete</Text>
+        <Text style={[styles.bookmarkDeleteText, { color: theme.onDelete }]}>删除</Text>
       </Pressable>
       <Animated.View
         {...panResponder.panHandlers}
@@ -507,7 +507,7 @@ function BookmarkRow({
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open bookmark ${bookmark.title}`}
+          accessibilityLabel={`打开书签 ${bookmark.title}`}
           onPress={() => {
             close();
             onOpen(bookmark);
@@ -517,7 +517,7 @@ function BookmarkRow({
           <Text style={[styles.bookmark, { color: theme.muted }]} numberOfLines={2}>
             {bookmark.title}
           </Text>
-          <Text style={[styles.bookmarkAction, { color: theme.accent }]}>Open</Text>
+          <Text style={[styles.bookmarkAction, { color: theme.accent }]}>打开</Text>
         </Pressable>
       </Animated.View>
     </View>
@@ -557,11 +557,11 @@ function LibraryScreen({
 
   return (
     <View style={styles.screen}>
-      <TopBar theme={theme} title="CBETA Library" onBack={onBack} />
+      <TopBar theme={theme} title="CBETA 经藏" onBack={onBack} />
       <TextInput
         value={query}
         onChangeText={setQuery}
-        placeholder="Search title, canon, or source id"
+        placeholder="搜索经名、藏经或编号"
         placeholderTextColor={theme.muted}
         autoCapitalize="none"
         style={[
@@ -570,8 +570,7 @@ function LibraryScreen({
         ]}
       />
       <Text style={[styles.catalogMeta, { color: theme.muted }]}>
-        Showing {filtered.length} of {cbetaCatalog.length.toLocaleString()} works. Tap a sutra to
-        open and cache it for offline reading.
+        显示 {filtered.length} / {cbetaCatalog.length.toLocaleString()} 部。轻点经文即可打开并离线缓存。
       </Text>
       {loadingMessage ? (
         <Text style={[styles.loadingText, { color: theme.accent }]}>{loadingMessage}</Text>
@@ -592,7 +591,7 @@ function LibraryScreen({
               </Text>
             </View>
             <Text style={[styles.cacheBadge, { color: theme.accent }]}>
-              {cachedIds[item.id] ? "Read" : "Open"}
+              {cachedIds[item.id] ? "阅读" : "打开"}
             </Text>
           </Pressable>
         ))}
@@ -618,7 +617,7 @@ function OutlineScreen({
 
   return (
     <View style={styles.screen}>
-      <TopBar theme={theme} title="Outline" onBack={onBack} />
+      <TopBar theme={theme} title="目录" onBack={onBack} />
       <ScrollView showsVerticalScrollIndicator={false}>
         {work.sections.map((section) => {
           const firstBlock = work.blocks.find((block) => block.id === section.blockIds[0]);
@@ -658,7 +657,7 @@ function OutlineScreen({
                   {section.title}
                 </Text>
                 <Text style={[styles.outlineMeta, { color: theme.muted }]}>
-                  {section.blockIds.length} blocks - {Math.round(fraction * 100)}% read
+                  {section.blockIds.length} 段 · 已读 {Math.round(fraction * 100)}%
                 </Text>
               </View>
               <MiniBar theme={theme} fraction={fraction} />
@@ -787,12 +786,12 @@ function ReaderScreen({
 
       <View style={[styles.readerFooter, { borderColor: theme.border }]}>
         <Text style={[styles.sessionText, { color: theme.muted }]}>
-          {sessionActive ? "Session active" : "Ready"}
+          {sessionActive ? "正在记录" : "就绪"}
         </Text>
         <View style={styles.readerActions}>
-          <Button label="Start" theme={theme} onPress={onStart} />
-          <Button label="Bookmark" theme={theme} onPress={onBookmark} />
-          <Button label="Mark Here" theme={theme} filled onPress={onMarkHere} />
+          <Button label="开始" theme={theme} onPress={onStart} />
+          <Button label="书签" theme={theme} onPress={onBookmark} />
+          <Button label="记到此处" theme={theme} filled onPress={onMarkHere} />
         </View>
       </View>
     </View>
@@ -817,7 +816,7 @@ function ProgressDot({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${label}, ${Math.round(fraction * 100)} percent read`}
+      accessibilityLabel={`${label}，已读 ${Math.round(fraction * 100)}%`}
       onPress={onPress}
       style={[
         styles.dotHit,
@@ -893,7 +892,7 @@ function TopBar({
   return (
     <View style={styles.topBar}>
       <Pressable onPress={onBack} style={styles.backButton}>
-        <Text style={[styles.backText, { color: theme.accent }]}>Back</Text>
+        <Text style={[styles.backText, { color: theme.accent }]}>返回</Text>
       </Pressable>
       <Text style={[styles.topTitle, { color: theme.text }]} numberOfLines={1}>
         {title}

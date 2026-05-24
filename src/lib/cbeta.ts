@@ -31,7 +31,7 @@ export const loadCbetaWork = async (item: CbetaCatalogItem): Promise<SutraWork> 
 
   const response = await fetch(item.rawUrl);
   if (!response.ok) {
-    throw new Error(`Unable to download ${item.sourceId} from CBETA`);
+    throw new Error(`无法从 CBETA 下载 ${item.sourceId}`);
   }
 
   const xml = await response.text();
