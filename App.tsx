@@ -1,5 +1,5 @@
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   FlatList,
@@ -71,6 +71,7 @@ function SutraReaderApp() {
     offsetToPosition(sampleSutra, 0),
   );
   const [loadingMessage, setLoadingMessage] = useState<string>();
+  const [readerOpenKey, setReaderOpenKey] = useState(0);
 
   const workRanges = readerState.readRanges.filter(
     (range) => range.workId === currentWork.id,
@@ -89,8 +90,12 @@ function SutraReaderApp() {
 
   useEffect(() => {
     loadReaderState().then((state) => {
-      setReaderState(state);
-      const latest = state.lastPosition;
+      const normalized = normalizeReaderState(state);
+      setReaderState(normalized);
+      if (JSON.stringify(normalized) !== JSON.stringify(state)) {
+        saveReaderState(normalized);
+      }
+      const latest = normalized.lastPosition;
       if (latest?.workId === currentWork.id) {
         setCurrentPosition(latest);
       }
@@ -98,13 +103,15 @@ function SutraReaderApp() {
   }, [currentWork.id]);
 
   const persist = (nextState: ReaderState) => {
-    setReaderState(nextState);
-    saveReaderState(nextState);
+    const normalized = normalizeReaderState(nextState);
+    setReaderState(normalized);
+    saveReaderState(normalized);
   };
 
   const openReaderAt = (position: ReadingPosition) => {
     setCurrentPosition(position);
     persist({ ...readerState, lastPosition: position });
+    setReaderOpenKey((value) => value + 1);
     setScreen("reader");
   };
 
@@ -117,6 +124,9 @@ function SutraReaderApp() {
       const start = bookmark?.position ?? offsetToPosition(work, 0);
       setCurrentPosition(start);
       persist({ ...readerState, lastPosition: start });
+      if (destination === "reader") {
+        setReaderOpenKey((value) => value + 1);
+      }
       setScreen(destination);
     } catch (error) {
       setLoadingMessage(
@@ -145,6 +155,7 @@ function SutraReaderApp() {
       setCurrentWork(work);
       setCurrentPosition(bookmark.position);
       persist({ ...readerState, lastPosition: bookmark.position });
+      setReaderOpenKey((value) => value + 1);
       setScreen("reader");
     } catch (error) {
       setLoadingMessage(
@@ -242,6 +253,7 @@ function SutraReaderApp() {
           theme={theme}
           work={currentWork}
           position={currentPosition}
+          restoreKey={readerOpenKey}
           readerState={readerState}
           onBack={() => setScreen("home")}
           onPositionChange={(position) => {
@@ -531,6 +543,7 @@ function ReaderScreen({
   theme,
   work,
   position,
+  restoreKey,
   readerState,
   onBack,
   onPositionChange,
@@ -541,6 +554,7 @@ function ReaderScreen({
   theme: Theme;
   work: SutraWork;
   position: ReadingPosition;
+  restoreKey: number;
   readerState: ReaderState;
   onBack: () => void;
   onPositionChange: (position: ReadingPosition) => void;
@@ -548,8 +562,30 @@ function ReaderScreen({
   onMarkHere: () => void;
   onBookmark: () => void;
 }) {
+  const listRef = useRef<FlatList<SutraWork["blocks"][number]>>(null);
+  const restoringRef = useRef(false);
+  const [scrollMetrics, setScrollMetrics] = useState({ contentHeight: 0, viewportHeight: 0 });
   const activeBlock = work.blocks.find((block) => block.id === position.textBlockId);
   const sessionActive = readerState.activeSessionStart?.workId === work.id;
+
+  useEffect(() => {
+    const scrollable = scrollMetrics.contentHeight - scrollMetrics.viewportHeight;
+    if (restoreKey <= 0 || scrollable <= 0) {
+      return;
+    }
+
+    restoringRef.current = true;
+    listRef.current?.scrollToOffset({
+      offset: Math.max(0, Math.min(position.scrollFraction, 1)) * scrollable,
+      animated: false,
+    });
+
+    const timeout = setTimeout(() => {
+      restoringRef.current = false;
+    }, 500);
+
+    return () => clearTimeout(timeout);
+  }, [position.scrollFraction, restoreKey, scrollMetrics.contentHeight, scrollMetrics.viewportHeight]);
 
   return (
     <View style={styles.screen}>
@@ -559,10 +595,23 @@ function ReaderScreen({
       </Text>
 
       <FlatList
+        ref={listRef}
         data={work.blocks}
         keyExtractor={(block) => block.id}
         showsVerticalScrollIndicator={false}
+        onContentSizeChange={(_width, height) =>
+          setScrollMetrics((metrics) => ({ ...metrics, contentHeight: height }))
+        }
+        onLayout={(event) =>
+          setScrollMetrics((metrics) => ({
+            ...metrics,
+            viewportHeight: event.nativeEvent.layout.height,
+          }))
+        }
         onScroll={(event) => {
+          if (restoringRef.current) {
+            return;
+          }
           const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
           const scrollable = Math.max(1, contentSize.height - layoutMeasurement.height);
           const fraction = Math.max(0, Math.min(contentOffset.y / scrollable, 1));
@@ -889,13 +938,43 @@ function createBookmark(
   };
 }
 
+function normalizeReaderState(state: ReaderState): ReaderState {
+  return {
+    ...state,
+    bookmarks: normalizeBookmarks(state.bookmarks),
+  };
+}
+
+function normalizeBookmarks(bookmarks: Bookmark[]) {
+  const seenIds = new Set<string>();
+  const seenPrimaryWorks = new Set<string>();
+  const normalized: Bookmark[] = [];
+
+  for (const bookmark of bookmarks) {
+    if (seenIds.has(bookmark.id)) {
+      continue;
+    }
+
+    seenIds.add(bookmark.id);
+
+    if (bookmark.isPrimaryForWork) {
+      if (seenPrimaryWorks.has(bookmark.workId)) {
+        continue;
+      }
+      seenPrimaryWorks.add(bookmark.workId);
+    }
+
+    normalized.push(bookmark);
+  }
+
+  return normalized.slice(0, 80);
+}
+
 function upsertPrimaryBookmark(bookmarks: Bookmark[], bookmark: Bookmark) {
   return [
     bookmark,
     ...bookmarks
-      .map((item) =>
-        item.workId === bookmark.workId ? { ...item, isPrimaryForWork: false } : item,
-      )
+      .filter((item) => !(item.workId === bookmark.workId && item.isPrimaryForWork))
       .slice(0, 40),
   ];
 }
