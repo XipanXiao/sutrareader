@@ -695,28 +695,22 @@ function ReaderScreen({
 }) {
   const listRef = useRef<FlatList<SutraWork["blocks"][number]>>(null);
   const restoringRef = useRef(false);
-  const [scrollMetrics, setScrollMetrics] = useState({ contentHeight: 0, viewportHeight: 0 });
+  const targetBlockIndex = Math.max(
+    0,
+    work.blocks.findIndex((block) => block.id === position.textBlockId),
+  );
+  const estimatedLayouts = useMemo(() => createEstimatedBlockLayouts(work), [work]);
   const activeBlock = work.blocks.find((block) => block.id === position.textBlockId);
   const sessionActive = readerState.activeSessionStart?.workId === work.id;
 
   useEffect(() => {
-    const scrollable = scrollMetrics.contentHeight - scrollMetrics.viewportHeight;
-    if (restoreKey <= 0 || scrollable <= 0) {
-      return;
-    }
-
     restoringRef.current = true;
-    listRef.current?.scrollToOffset({
-      offset: Math.max(0, Math.min(position.scrollFraction, 1)) * scrollable,
-      animated: false,
-    });
-
     const timeout = setTimeout(() => {
       restoringRef.current = false;
-    }, 500);
+    }, 350);
 
     return () => clearTimeout(timeout);
-  }, [position.scrollFraction, restoreKey, scrollMetrics.contentHeight, scrollMetrics.viewportHeight]);
+  }, [restoreKey, work.id]);
 
   return (
     <View style={styles.screen}>
@@ -726,19 +720,29 @@ function ReaderScreen({
       </Text>
 
       <FlatList
+        key={`${work.id}-${restoreKey}`}
         ref={listRef}
         data={work.blocks}
         keyExtractor={(block) => block.id}
+        initialScrollIndex={targetBlockIndex}
+        initialNumToRender={16}
+        maxToRenderPerBatch={12}
+        windowSize={9}
+        getItemLayout={(_data, index) => estimatedLayouts[index]}
+        onScrollToIndexFailed={(info) => {
+          listRef.current?.scrollToOffset({
+            offset: info.averageItemLength * info.index,
+            animated: false,
+          });
+          setTimeout(() => {
+            listRef.current?.scrollToIndex({
+              index: info.index,
+              animated: false,
+              viewPosition: 0.08,
+            });
+          }, 50);
+        }}
         showsVerticalScrollIndicator={false}
-        onContentSizeChange={(_width, height) =>
-          setScrollMetrics((metrics) => ({ ...metrics, contentHeight: height }))
-        }
-        onLayout={(event) =>
-          setScrollMetrics((metrics) => ({
-            ...metrics,
-            viewportHeight: event.nativeEvent.layout.height,
-          }))
-        }
         onScroll={(event) => {
           if (restoringRef.current) {
             return;
@@ -832,6 +836,20 @@ function ProgressDot({
       />
     </Pressable>
   );
+}
+
+function createEstimatedBlockLayouts(work: SutraWork) {
+  const charsPerLine = 14;
+  let offset = 0;
+
+  return work.blocks.map((block, index) => {
+    const textLines = Math.max(1, Math.ceil(block.textSimplified.length / charsPerLine));
+    const titleHeight = block.title ? 30 : 0;
+    const length = 20 + titleHeight + textLines * 42 + 10;
+    const layout = { index, length, offset };
+    offset += length;
+    return layout;
+  });
 }
 
 function Button({
