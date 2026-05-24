@@ -166,6 +166,23 @@ function SutraReaderApp() {
     setLoadingMessage(undefined);
   };
 
+  const deleteBookmark = (bookmark: Bookmark) => {
+    const nextBookmarks = readerState.bookmarks.filter((item) => item.id !== bookmark.id);
+    const lastPosition =
+      readerState.lastPosition?.id === bookmark.position.id ? undefined : readerState.lastPosition;
+    const activeSessionStart =
+      readerState.activeSessionStart?.id === bookmark.position.id
+        ? undefined
+        : readerState.activeSessionStart;
+
+    persist({
+      ...readerState,
+      activeSessionStart,
+      lastPosition,
+      bookmarks: nextBookmarks,
+    });
+  };
+
   const startSession = () => {
     persist({ ...readerState, activeSessionStart: currentPosition });
   };
@@ -227,6 +244,7 @@ function SutraReaderApp() {
             openGlobalSegment(segment, globalProgress.workFractions, openCatalogItem)
           }
           onOpenBookmark={openBookmark}
+          onDeleteBookmark={deleteBookmark}
           onLoadDefault={() => openCatalogItem(defaultCatalogItem)}
           onReset={resetProgress}
         />
@@ -282,6 +300,7 @@ function HomeScreen({
   onContinue,
   onOpenGlobalSegment,
   onOpenBookmark,
+  onDeleteBookmark,
   onLoadDefault,
   onReset,
 }: {
@@ -297,6 +316,7 @@ function HomeScreen({
   onContinue: () => void;
   onOpenGlobalSegment: (segment: GlobalProgressSegment) => void;
   onOpenBookmark: (bookmark: Bookmark) => void;
+  onDeleteBookmark: (bookmark: Bookmark) => void;
   onLoadDefault: () => void;
   onReset: () => void;
 }) {
@@ -362,18 +382,27 @@ function HomeScreen({
       <View style={styles.panel}>
         <Text style={[styles.panelTitle, { color: theme.text }]}>Active bookmarks</Text>
         {activeBookmarks.slice(0, 4).map((bookmark) => (
-          <Pressable
-            key={bookmark.id}
-            accessibilityRole="button"
-            accessibilityLabel={`Open bookmark ${bookmark.title}`}
-            onPress={() => onOpenBookmark(bookmark)}
-            style={[styles.bookmarkRow, { borderColor: theme.border }]}
-          >
-            <Text style={[styles.bookmark, { color: theme.muted }]} numberOfLines={2}>
-              {bookmark.title}
-            </Text>
-            <Text style={[styles.bookmarkAction, { color: theme.accent }]}>Open</Text>
-          </Pressable>
+          <View key={bookmark.id} style={[styles.bookmarkRow, { borderColor: theme.border }]}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Open bookmark ${bookmark.title}`}
+              onPress={() => onOpenBookmark(bookmark)}
+              style={styles.bookmarkOpenTarget}
+            >
+              <Text style={[styles.bookmark, { color: theme.muted }]} numberOfLines={2}>
+                {bookmark.title}
+              </Text>
+              <Text style={[styles.bookmarkAction, { color: theme.accent }]}>Open</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Delete bookmark ${bookmark.title}`}
+              onPress={() => onDeleteBookmark(bookmark)}
+              style={styles.bookmarkDeleteTarget}
+            >
+              <Text style={[styles.bookmarkDeleteText, { color: theme.muted }]}>Delete</Text>
+            </Pressable>
+          </View>
         ))}
         {activeBookmarks.length === 0 ? (
           <Text style={[styles.bookmark, { color: theme.muted }]}>No bookmarks yet</Text>
@@ -1117,11 +1146,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderBottomWidth: 1,
     flexDirection: "row",
-    gap: 10,
     minHeight: 44,
     paddingVertical: 8,
   },
+  bookmarkOpenTarget: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 44,
+  },
   bookmarkAction: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  bookmarkDeleteTarget: {
+    justifyContent: "center",
+    minHeight: 44,
+    paddingLeft: 14,
+  },
+  bookmarkDeleteText: {
     fontSize: 13,
     fontWeight: "700",
   },
