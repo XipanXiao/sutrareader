@@ -191,16 +191,8 @@ function SutraReaderApp() {
     });
   };
 
-  const startSession = () => {
-    persist({ ...readerState, activeSessionStart: currentPosition });
-  };
-
   const markHere = () => {
-    const activeStart =
-      readerState.activeSessionStart?.workId === currentWork.id
-        ? readerState.activeSessionStart
-        : undefined;
-    const start = activeStart ?? primaryBookmark?.position ?? currentPosition;
+    const start = primaryBookmark?.position ?? currentPosition;
     const range = createReadRange(currentWork, start, currentPosition);
     const bookmark = createBookmark(currentWork, currentPosition, true);
     const nextRanges = [...readerState.readRanges, range];
@@ -226,20 +218,6 @@ function SutraReaderApp() {
       bookmarks: nextBookmarks,
     });
     setScreen("home");
-  };
-
-  const saveBookmark = () => {
-    if (completedWorkIds.has(currentWork.id)) {
-      setLoadingMessage("这部经已经读完，进度仍会保留。");
-      return;
-    }
-
-    const bookmark = createBookmark(currentWork, currentPosition, false);
-    persist({
-      ...readerState,
-      lastPosition: currentPosition,
-      bookmarks: [bookmark, ...readerState.bookmarks],
-    });
   };
 
   const resetProgress = () => {
@@ -299,15 +277,12 @@ function SutraReaderApp() {
           work={currentWork}
           position={currentPosition}
           restoreKey={readerOpenKey}
-          readerState={readerState}
           onBack={() => setScreen("home")}
           onPositionChange={(position) => {
             setCurrentPosition(position);
             saveReaderState({ ...readerState, lastPosition: position });
           }}
-          onStart={startSession}
           onMarkHere={markHere}
-          onBookmark={saveBookmark}
         />
       ) : null}
     </SafeAreaView>
@@ -456,34 +431,48 @@ function BookmarkRow({
 }) {
   const deleteWidth = 88;
   const translateX = useRef(new Animated.Value(0)).current;
+  const startOffset = useRef(0);
+  const currentOffset = useRef(0);
+  const revealed = useRef(false);
 
-  const close = () => {
+  const animateTo = (value: number) => {
+    currentOffset.current = value;
+    revealed.current = value < 0;
     Animated.spring(translateX, {
-      toValue: 0,
+      toValue: value,
       useNativeDriver: true,
     }).start();
   };
 
+  const close = () => animateTo(0);
+
   const revealDelete = () => {
-    Animated.spring(translateX, {
-      toValue: -deleteWidth,
-      useNativeDriver: true,
-    }).start();
+    animateTo(-deleteWidth);
   };
 
   const panResponder = useMemo(
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponderCapture: (_event, gesture) =>
-          gesture.dx < -4 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.75,
+          Math.abs(gesture.dx) > 5 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.35,
         onMoveShouldSetPanResponder: (_event, gesture) =>
-          gesture.dx < -4 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.75,
+          Math.abs(gesture.dx) > 5 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.35,
+        onPanResponderGrant: () => {
+          startOffset.current = currentOffset.current;
+        },
         onPanResponderMove: (_event, gesture) => {
-          translateX.setValue(Math.max(-deleteWidth, Math.min(0, gesture.dx)));
+          const nextOffset = Math.max(
+            -deleteWidth,
+            Math.min(0, startOffset.current + gesture.dx),
+          );
+          currentOffset.current = nextOffset;
+          translateX.setValue(nextOffset);
         },
         onPanResponderRelease: (_event, gesture) => {
-          if (gesture.dx < -24 || gesture.vx < -0.35) {
+          if (currentOffset.current < -18 || gesture.vx < -0.18) {
             revealDelete();
+          } else if (gesture.dx > 8 || gesture.vx > 0.12) {
+            close();
           } else {
             close();
           }
@@ -517,6 +506,10 @@ function BookmarkRow({
           accessibilityRole="button"
           accessibilityLabel={`打开书签 ${bookmark.title}`}
           onPress={() => {
+            if (revealed.current) {
+              close();
+              return;
+            }
             close();
             onOpen(bookmark);
           }}
@@ -682,23 +675,17 @@ function ReaderScreen({
   work,
   position,
   restoreKey,
-  readerState,
   onBack,
   onPositionChange,
-  onStart,
   onMarkHere,
-  onBookmark,
 }: {
   theme: Theme;
   work: SutraWork;
   position: ReadingPosition;
   restoreKey: number;
-  readerState: ReaderState;
   onBack: () => void;
   onPositionChange: (position: ReadingPosition) => void;
-  onStart: () => void;
   onMarkHere: () => void;
-  onBookmark: () => void;
 }) {
   const listRef = useRef<FlatList<SutraWork["blocks"][number]>>(null);
   const restoringRef = useRef(false);
@@ -708,7 +695,6 @@ function ReaderScreen({
   );
   const estimatedLayouts = useMemo(() => createEstimatedBlockLayouts(work), [work]);
   const activeBlock = work.blocks.find((block) => block.id === position.textBlockId);
-  const sessionActive = readerState.activeSessionStart?.workId === work.id;
 
   useEffect(() => {
     restoringRef.current = true;
@@ -793,12 +779,7 @@ function ReaderScreen({
       />
 
       <View style={[styles.readerFooter, { borderColor: theme.border }]}>
-        <Text style={[styles.sessionText, { color: theme.muted }]}>
-          {sessionActive ? "正在记录" : "就绪"}
-        </Text>
         <View style={styles.readerActions}>
-          <Button label="开始" theme={theme} onPress={onStart} />
-          <Button label="书签" theme={theme} onPress={onBookmark} />
           <Button label="记到此处" theme={theme} filled onPress={onMarkHere} />
         </View>
       </View>
@@ -1143,24 +1124,22 @@ function normalizeReaderState(state: ReaderState): ReaderState {
 
 function normalizeBookmarks(bookmarks: Bookmark[], completedWorkIds: Set<string>) {
   const seenIds = new Set<string>();
-  const seenPrimaryWorks = new Set<string>();
+  const seenWorks = new Set<string>();
   const normalized: Bookmark[] = [];
 
   for (const bookmark of bookmarks) {
-    if (seenIds.has(bookmark.id) || completedWorkIds.has(bookmark.workId)) {
+    if (
+      seenIds.has(bookmark.id) ||
+      seenWorks.has(bookmark.workId) ||
+      completedWorkIds.has(bookmark.workId)
+    ) {
       continue;
     }
 
     seenIds.add(bookmark.id);
+    seenWorks.add(bookmark.workId);
 
-    if (bookmark.isPrimaryForWork) {
-      if (seenPrimaryWorks.has(bookmark.workId)) {
-        continue;
-      }
-      seenPrimaryWorks.add(bookmark.workId);
-    }
-
-    normalized.push(bookmark);
+    normalized.push({ ...bookmark, isPrimaryForWork: true });
   }
 
   return normalized.slice(0, 80);
@@ -1169,9 +1148,7 @@ function normalizeBookmarks(bookmarks: Bookmark[], completedWorkIds: Set<string>
 function upsertPrimaryBookmark(bookmarks: Bookmark[], bookmark: Bookmark) {
   return [
     bookmark,
-    ...bookmarks
-      .filter((item) => !(item.workId === bookmark.workId && item.isPrimaryForWork))
-      .slice(0, 40),
+    ...bookmarks.filter((item) => item.workId !== bookmark.workId).slice(0, 40),
   ];
 }
 
