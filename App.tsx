@@ -127,6 +127,34 @@ function SutraReaderApp() {
     setLoadingMessage(undefined);
   };
 
+  const openBookmark = async (bookmark: Bookmark) => {
+    if (bookmark.workId === currentWork.id) {
+      openReaderAt(bookmark.position);
+      return;
+    }
+
+    const item = cbetaCatalog.find((candidate) => candidate.id === bookmark.workId);
+    if (!item) {
+      setLoadingMessage("Unable to find the bookmarked sutra in the library");
+      return;
+    }
+
+    setLoadingMessage(`Loading ${item.title}`);
+    try {
+      const work = await loadCbetaWork(item);
+      setCurrentWork(work);
+      setCurrentPosition(bookmark.position);
+      persist({ ...readerState, lastPosition: bookmark.position });
+      setScreen("reader");
+    } catch (error) {
+      setLoadingMessage(
+        error instanceof Error ? error.message : "Unable to load this bookmarked sutra",
+      );
+      return;
+    }
+    setLoadingMessage(undefined);
+  };
+
   const startSession = () => {
     persist({ ...readerState, activeSessionStart: currentPosition });
   };
@@ -187,6 +215,7 @@ function SutraReaderApp() {
           onOpenGlobalSegment={(segment) =>
             openGlobalSegment(segment, globalProgress.workFractions, openCatalogItem)
           }
+          onOpenBookmark={openBookmark}
           onLoadDefault={() => openCatalogItem(defaultCatalogItem)}
           onReset={resetProgress}
         />
@@ -240,6 +269,7 @@ function HomeScreen({
   onOpenOutline,
   onContinue,
   onOpenGlobalSegment,
+  onOpenBookmark,
   onLoadDefault,
   onReset,
 }: {
@@ -254,6 +284,7 @@ function HomeScreen({
   onOpenOutline: () => void;
   onContinue: () => void;
   onOpenGlobalSegment: (segment: GlobalProgressSegment) => void;
+  onOpenBookmark: (bookmark: Bookmark) => void;
   onLoadDefault: () => void;
   onReset: () => void;
 }) {
@@ -319,9 +350,18 @@ function HomeScreen({
       <View style={styles.panel}>
         <Text style={[styles.panelTitle, { color: theme.text }]}>Active bookmarks</Text>
         {activeBookmarks.slice(0, 4).map((bookmark) => (
-          <Text key={bookmark.id} style={[styles.bookmark, { color: theme.muted }]}>
-            {bookmark.title}
-          </Text>
+          <Pressable
+            key={bookmark.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Open bookmark ${bookmark.title}`}
+            onPress={() => onOpenBookmark(bookmark)}
+            style={[styles.bookmarkRow, { borderColor: theme.border }]}
+          >
+            <Text style={[styles.bookmark, { color: theme.muted }]} numberOfLines={2}>
+              {bookmark.title}
+            </Text>
+            <Text style={[styles.bookmarkAction, { color: theme.accent }]}>Open</Text>
+          </Pressable>
         ))}
         {activeBookmarks.length === 0 ? (
           <Text style={[styles.bookmark, { color: theme.muted }]}>No bookmarks yet</Text>
@@ -990,8 +1030,21 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   bookmark: {
+    flex: 1,
     fontSize: 15,
     lineHeight: 24,
+  },
+  bookmarkRow: {
+    alignItems: "center",
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 44,
+    paddingVertical: 8,
+  },
+  bookmarkAction: {
+    fontSize: 13,
+    fontWeight: "700",
   },
   sourceText: {
     fontSize: 12,
