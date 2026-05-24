@@ -41,7 +41,7 @@ export const offsetToPosition = (
   offset: number,
   scrollFraction = 0,
 ): ReadingPosition => {
-  const safeOffset = Math.max(0, Math.min(offset, totalChars(work) - 1));
+  const safeOffset = Math.max(0, Math.min(offset, totalChars(work)));
   let cursor = 0;
 
   for (const block of work.blocks) {

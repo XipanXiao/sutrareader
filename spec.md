@@ -16,3 +16,5 @@ I could be stopping at the middle of any page, so bookmarks need to be able to r
 I prefer reading simplifiled Chinese.
 Note that the progress dots should show the global progress, that is, it shows how much I have finished in the whole sea. So you may add more dots to the homepage, and partially hightlight a dot if it is partially finished. I need a global perspective so that I know how much I finished.
 I should be able to search a sutra, open it, and start reading.
+Active bookmarks should represent only readings that are still in progress. When I finish a whole book, its active bookmark should disappear, but its completed progress should remain saved and should continue to fill the corresponding global progress dot.
+The app should keep progress and bookmarks as separate concepts: progress records what has been read, while active bookmarks are only resumable unfinished reading positions.

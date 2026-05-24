@@ -43,6 +43,7 @@ type GlobalProgressSegment = {
 };
 
 const makeId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const completedThreshold = 0.999;
 const defaultCatalogItem =
   cbetaCatalog.find((item) => item.id === "T01n0001") ?? cbetaCatalog[0];
 const catalogIndexById = new Map(
@@ -76,8 +77,13 @@ function SutraReaderApp() {
   const workRanges = readerState.readRanges.filter(
     (range) => range.workId === currentWork.id,
   );
+  const completedWorkIds = useMemo(
+    () => completedWorkIdsFromRanges(readerState.readRanges),
+    [readerState.readRanges],
+  );
   const workBookmarks = readerState.bookmarks.filter(
-    (bookmark) => bookmark.workId === currentWork.id,
+    (bookmark) =>
+      bookmark.workId === currentWork.id && !completedWorkIds.has(bookmark.workId),
   );
   const progress = percentRead(currentWork, workRanges);
   const globalProgress = useMemo(
@@ -195,18 +201,37 @@ function SutraReaderApp() {
     const start = activeStart ?? primaryBookmark?.position ?? currentPosition;
     const range = createReadRange(currentWork, start, currentPosition);
     const bookmark = createBookmark(currentWork, currentPosition, true);
+    const nextRanges = [...readerState.readRanges, range];
+    const workComplete =
+      percentRead(
+        currentWork,
+        nextRanges.filter((candidate) => candidate.workId === currentWork.id),
+      ) >= completedThreshold;
+    const nextBookmarks = workComplete
+      ? readerState.bookmarks.filter((item) => item.workId !== currentWork.id)
+      : upsertPrimaryBookmark(readerState.bookmarks, bookmark);
 
     persist({
       ...readerState,
       activeSessionStart: undefined,
-      lastPosition: currentPosition,
-      readRanges: [...readerState.readRanges, range],
-      bookmarks: upsertPrimaryBookmark(readerState.bookmarks, bookmark),
+      lastPosition:
+        workComplete
+          ? readerState.lastPosition?.workId === currentWork.id
+            ? undefined
+            : readerState.lastPosition
+          : currentPosition,
+      readRanges: nextRanges,
+      bookmarks: nextBookmarks,
     });
     setScreen("home");
   };
 
   const saveBookmark = () => {
+    if (completedWorkIds.has(currentWork.id)) {
+      setLoadingMessage("This sutra is already finished; progress remains saved.");
+      return;
+    }
+
     const bookmark = createBookmark(currentWork, currentPosition, false);
     persist({
       ...readerState,
@@ -320,7 +345,9 @@ function HomeScreen({
   onLoadDefault: () => void;
   onReset: () => void;
 }) {
-  const activeBookmarks = readerState.bookmarks;
+  const activeBookmarks = readerState.bookmarks.filter(
+    (bookmark) => (globalProgress.workFractions[bookmark.workId] ?? 0) < completedThreshold,
+  );
 
   return (
     <ScrollView
@@ -859,6 +886,40 @@ function calculateGlobalProgress(readRanges: ReaderState["readRanges"]) {
   };
 }
 
+function completedWorkIdsFromRanges(readRanges: ReaderState["readRanges"]) {
+  const rangesByWork = new Map<string, Array<readonly [number, number]>>();
+  const totalByWork = new Map<string, number>();
+
+  for (const range of readRanges) {
+    if (
+      typeof range.startOffset !== "number" ||
+      typeof range.endOffset !== "number" ||
+      typeof range.workTotalChars !== "number" ||
+      range.workTotalChars <= 0
+    ) {
+      continue;
+    }
+
+    const start = Math.max(0, Math.min(range.startOffset, range.endOffset));
+    const end = Math.max(start, Math.max(range.startOffset, range.endOffset));
+    const existing = rangesByWork.get(range.workId) ?? [];
+    rangesByWork.set(range.workId, [...existing, [start, end]]);
+    totalByWork.set(range.workId, range.workTotalChars);
+  }
+
+  const completed = new Set<string>();
+
+  for (const [workId, ranges] of rangesByWork) {
+    const total = totalByWork.get(workId) ?? 0;
+    const fraction = total > 0 ? mergedIntervalLength(ranges) / total : 0;
+    if (fraction >= completedThreshold) {
+      completed.add(workId);
+    }
+  }
+
+  return completed;
+}
+
 function mergedIntervalLength(intervals: Array<readonly [number, number]>) {
   const sorted = intervals
     .filter(([start, end]) => end > start)
@@ -968,19 +1029,25 @@ function createBookmark(
 }
 
 function normalizeReaderState(state: ReaderState): ReaderState {
+  const completedWorkIds = completedWorkIdsFromRanges(state.readRanges);
+
   return {
     ...state,
-    bookmarks: normalizeBookmarks(state.bookmarks),
+    activeSessionStart:
+      state.activeSessionStart && completedWorkIds.has(state.activeSessionStart.workId)
+        ? undefined
+        : state.activeSessionStart,
+    bookmarks: normalizeBookmarks(state.bookmarks, completedWorkIds),
   };
 }
 
-function normalizeBookmarks(bookmarks: Bookmark[]) {
+function normalizeBookmarks(bookmarks: Bookmark[], completedWorkIds: Set<string>) {
   const seenIds = new Set<string>();
   const seenPrimaryWorks = new Set<string>();
   const normalized: Bookmark[] = [];
 
   for (const bookmark of bookmarks) {
-    if (seenIds.has(bookmark.id)) {
+    if (seenIds.has(bookmark.id) || completedWorkIds.has(bookmark.workId)) {
       continue;
     }
 
