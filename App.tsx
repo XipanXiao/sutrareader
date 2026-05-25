@@ -204,10 +204,10 @@ function SutraReaderApp() {
     });
   };
 
-  const markHere = () => {
-    const start = primaryBookmark?.position ?? currentPosition;
-    const range = createReadRange(currentWork, start, currentPosition);
-    const bookmark = createBookmark(currentWork, currentPosition, true);
+  const saveProgressAt = (position: ReadingPosition, returnHome: boolean) => {
+    const start = primaryBookmark?.position ?? position;
+    const range = createReadRange(currentWork, start, position);
+    const bookmark = createBookmark(currentWork, position, true);
     const nextRanges = [...readerState.readRanges, range];
     const workComplete =
       percentRead(
@@ -226,11 +226,27 @@ function SutraReaderApp() {
           ? readerState.lastPosition?.workId === currentWork.id
             ? undefined
             : readerState.lastPosition
-          : currentPosition,
+          : position,
       readRanges: nextRanges,
       bookmarks: nextBookmarks,
     });
-    setScreen("home");
+
+    if (returnHome) {
+      setScreen("home");
+    }
+  };
+
+  const markHere = () => {
+    saveProgressAt(currentPosition, true);
+  };
+
+  const openNextWork = () => {
+    if (!nextCatalogItem) {
+      return;
+    }
+
+    saveProgressAt(offsetToPosition(currentWork, totalChars(currentWork), 1), false);
+    openCatalogItem(nextCatalogItem, "reader");
   };
 
   return (
@@ -288,7 +304,7 @@ function SutraReaderApp() {
           }}
           onMarkHere={markHere}
           nextWorkTitle={nextCatalogItem?.titleSimplified ?? nextCatalogItem?.title}
-          onOpenNextWork={() => nextCatalogItem && openCatalogItem(nextCatalogItem, "reader")}
+          onOpenNextWork={openNextWork}
         />
       ) : null}
     </SafeAreaView>
