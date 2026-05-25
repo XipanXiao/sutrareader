@@ -154,12 +154,16 @@ function SutraReaderApp() {
   };
 
   const openBookmark = async (bookmark: Bookmark) => {
-    if (bookmark.workId === currentWork.id) {
-      openReaderAt(bookmark.position);
+    if (
+      bookmark.workId === currentWork.id ||
+      bookmark.position.workId === currentWork.id ||
+      currentWork.blocks.some((block) => block.id === bookmark.position.textBlockId)
+    ) {
+      openReaderAt(positionForBookmarkInWork(bookmark, currentWork));
       return;
     }
 
-    const item = cbetaCatalog.find((candidate) => candidate.id === bookmark.workId);
+    const item = catalogItemForBookmark(bookmark);
     if (!item) {
       setLoadingMessage("无法在经藏中找到这个书签对应的经文");
       return;
@@ -168,9 +172,10 @@ function SutraReaderApp() {
     setLoadingMessage(`正在载入《${item.titleSimplified ?? item.title}》`);
     try {
       const work = await loadCbetaWork(item);
+      const position = positionForBookmarkInWork(bookmark, work);
       setCurrentWork(work);
-      setCurrentPosition(bookmark.position);
-      persist({ ...readerState, lastPosition: bookmark.position });
+      setCurrentPosition(position);
+      persist({ ...readerState, lastPosition: position });
       setReaderOpenKey((value) => value + 1);
       setScreen("reader");
     } catch (error) {
@@ -1096,6 +1101,55 @@ function catalogIndexForWork(work: SutraWork) {
   }
 
   return undefined;
+}
+
+function catalogItemForBookmark(bookmark: Bookmark) {
+  const direct =
+    cbetaCatalog.find((item) => item.id === bookmark.workId) ??
+    cbetaCatalog.find((item) => item.id === bookmark.position.workId);
+  if (direct) {
+    return direct;
+  }
+
+  const bookmarkText = normalizeSearchText(
+    [
+      bookmark.workId,
+      bookmark.position.workId,
+      bookmark.position.textBlockId,
+      bookmark.position.anchorId,
+      bookmark.title,
+    ].join(" "),
+  );
+
+  const sourceMatch = cbetaCatalog.find((item) =>
+    bookmarkText.includes(normalizeSearchText(item.sourceId)),
+  );
+  if (sourceMatch) {
+    return sourceMatch;
+  }
+
+  return cbetaCatalog.find((item) => {
+    const title = normalizeSearchText(item.titleSimplified ?? item.title);
+    return title.length > 0 && (bookmarkText.includes(title) || title.includes(bookmarkText));
+  });
+}
+
+function positionForBookmarkInWork(bookmark: Bookmark, work: SutraWork): ReadingPosition {
+  const block = work.blocks.find((item) => item.id === bookmark.position.textBlockId);
+  if (!block) {
+    return offsetToPosition(work, 0);
+  }
+
+  return {
+    ...bookmark.position,
+    workId: work.id,
+    textBlockId: block.id,
+    anchorId: block.anchorId,
+    charOffset: Math.max(
+      0,
+      Math.min(bookmark.position.charOffset, block.textSimplified.length),
+    ),
+  };
 }
 
 function openGlobalSegment(
