@@ -25,7 +25,7 @@ import {
   segmentReadFraction,
   totalChars,
 } from "./src/lib/progress";
-import { loadReaderState, resetReaderState, saveReaderState } from "./src/lib/storage";
+import { loadReaderState, saveReaderState } from "./src/lib/storage";
 import {
   Bookmark,
   CbetaCatalogItem,
@@ -220,14 +220,6 @@ function SutraReaderApp() {
     setScreen("home");
   };
 
-  const resetProgress = () => {
-    const nextState = { bookmarks: [], readRanges: [] };
-    const start = offsetToPosition(currentWork, 0);
-    setCurrentPosition(start);
-    setReaderState(nextState);
-    resetReaderState();
-  };
-
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]}>
       <StatusBar style={dark ? "light" : "dark"} />
@@ -251,7 +243,6 @@ function SutraReaderApp() {
           onOpenBookmark={openBookmark}
           onDeleteBookmark={deleteBookmark}
           onLoadDefault={() => openCatalogItem(defaultCatalogItem)}
-          onReset={resetProgress}
         />
       ) : null}
       {screen === "library" ? (
@@ -304,7 +295,6 @@ function HomeScreen({
   onOpenBookmark,
   onDeleteBookmark,
   onLoadDefault,
-  onReset,
 }: {
   theme: Theme;
   currentWork: SutraWork;
@@ -320,7 +310,6 @@ function HomeScreen({
   onOpenBookmark: (bookmark: Bookmark) => void;
   onDeleteBookmark: (bookmark: Bookmark) => void;
   onLoadDefault: () => void;
-  onReset: () => void;
 }) {
   const activeBookmarks = readerState.bookmarks.filter(
     (bookmark) => (globalProgress.workFractions[bookmark.workId] ?? 0) < completedThreshold,
@@ -410,10 +399,6 @@ function HomeScreen({
           {currentWork.sourceAttribution}
         </Text>
       ) : null}
-
-      <Pressable onPress={onReset} style={styles.resetButton}>
-        <Text style={[styles.resetText, { color: theme.muted }]}>清除本机进度</Text>
-      </Pressable>
     </ScrollView>
   );
 }
@@ -1331,14 +1316,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     marginTop: 18,
-  },
-  resetButton: {
-    marginTop: "auto",
-    paddingVertical: 18,
-  },
-  resetText: {
-    fontSize: 13,
-    textAlign: "center",
   },
   topBar: {
     alignItems: "center",
