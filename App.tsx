@@ -711,7 +711,16 @@ function ReaderScreen({
 
   return (
     <View style={styles.screen}>
-      <TopBar theme={theme} title={work.title} onBack={onBack} />
+      <TopBar
+        theme={theme}
+        title={work.title}
+        onBack={onBack}
+        rightAction={
+          <Pressable onPress={onMarkHere} style={styles.topActionButton}>
+            <Text style={[styles.topActionText, { color: theme.accent }]}>记到此处</Text>
+          </Pressable>
+        }
+      />
       <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={2}>
         {work.subtitle}
       </Text>
@@ -803,11 +812,6 @@ function ReaderScreen({
         )}
       />
 
-      <View style={[styles.readerFooter, { borderColor: theme.border }]}>
-        <View style={styles.readerActions}>
-          <Button label="记到此处" theme={theme} filled onPress={onMarkHere} />
-        </View>
-      </View>
     </View>
   );
 }
@@ -898,10 +902,12 @@ function TopBar({
   theme,
   title,
   onBack,
+  rightAction,
 }: {
   theme: Theme;
   title: string;
   onBack: () => void;
+  rightAction?: React.ReactNode;
 }) {
   return (
     <View style={styles.topBar}>
@@ -911,7 +917,7 @@ function TopBar({
       <Text style={[styles.topTitle, { color: theme.text }]} numberOfLines={1}>
         {title}
       </Text>
-      <View style={styles.backButton} />
+      <View style={styles.topRightSlot}>{rightAction}</View>
     </View>
   );
 }
@@ -1457,6 +1463,19 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textAlign: "center",
   },
+  topRightSlot: {
+    alignItems: "flex-end",
+    minWidth: 68,
+  },
+  topActionButton: {
+    alignItems: "flex-end",
+    justifyContent: "center",
+    minHeight: 44,
+  },
+  topActionText: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
   searchInput: {
     borderRadius: 8,
     borderWidth: 1,
@@ -1553,21 +1572,5 @@ const styles = StyleSheet.create({
   readerText: {
     fontSize: 24,
     lineHeight: 42,
-  },
-  readerFooter: {
-    borderTopWidth: 1,
-    paddingTop: 12,
-  },
-  sessionText: {
-    fontSize: 13,
-    marginBottom: 10,
-    textAlign: "center",
-  },
-  readerActions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    justifyContent: "center",
-    paddingBottom: 8,
   },
 });

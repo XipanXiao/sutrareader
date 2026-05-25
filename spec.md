@@ -22,6 +22,7 @@ Active bookmarks should not show a persistent delete button; deleting should use
 Opening a bookmark in a long sutra should jump directly to the saved position without visibly scrolling from the beginning of the text.
 The active bookmark list should be scrollable when there are many unfinished readings, and its left-swipe delete gesture should be easy to trigger without interfering with vertical scrolling.
 The reader should use a single “记到此处” action for saving progress; separate start/bookmark buttons are not needed.
+The “记到此处” action should live in the reader's top-right header area so the bottom of the screen can show more sutra text.
 There should be at most one active bookmark per sutra. Pressing “记到此处” should update that sutra's active bookmark instead of creating duplicates.
 If a bookmark row's delete button is revealed, swiping right or tapping the row should hide the delete button.
 When the reader reaches the end of a sutra, it should show a “下一部” button that opens the next work in library order when one exists. The sticky “记到此处” button should remain the only progress-marking action, so it should not be duplicated in the end-of-text panel.
