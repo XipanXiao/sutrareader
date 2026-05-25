@@ -96,8 +96,8 @@ function SutraReaderApp() {
   const primaryBookmark =
     workBookmarks.find((bookmark) => bookmark.isPrimaryForWork) ?? workBookmarks[0];
   const nextCatalogItem = useMemo(() => {
-    const index = catalogIndexById.get(currentWork.id);
-    if (index === undefined) {
+    const index = catalogIndexById.get(currentWork.id) ?? catalogIndexBySourceWork(currentWork);
+    if (index === undefined || index >= cbetaCatalog.length - 1) {
       return undefined;
     }
 
@@ -763,7 +763,6 @@ function ReaderScreen({
               </Text>
             )}
             <View style={styles.readerEndActions}>
-              <Button label="记到此处" theme={theme} onPress={onMarkHere} />
               {nextWorkTitle ? (
                 <Button label="下一部" theme={theme} filled onPress={onOpenNextWork} />
               ) : null}
@@ -1066,6 +1065,17 @@ function globalSegmentFraction(
 function isWorkInGlobalSegment(workId: string, segment: GlobalProgressSegment) {
   const index = catalogIndexById.get(workId);
   return index !== undefined && index >= segment.startIndex && index < segment.endIndex;
+}
+
+function catalogIndexBySourceWork(work: SutraWork) {
+  if (work.sourcePath) {
+    const index = cbetaCatalog.findIndex((item) => item.path === work.sourcePath);
+    if (index >= 0) {
+      return index;
+    }
+  }
+
+  return undefined;
 }
 
 function openGlobalSegment(
