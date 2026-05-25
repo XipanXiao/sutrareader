@@ -30,7 +30,11 @@ export const loadCbetaWork = async (item: CbetaCatalogItem): Promise<SutraWork> 
     if (shouldRefreshCachedWork(work)) {
       await FileSystem.deleteAsync(cachePath, { idempotent: true });
     } else {
-      return work;
+      const normalized = normalizeCachedWork(work);
+      if (normalized.changed) {
+        await FileSystem.writeAsStringAsync(cachePath, JSON.stringify(normalized.work));
+      }
+      return normalized.work;
     }
   }
 
@@ -52,6 +56,25 @@ const shouldRefreshCachedWork = (work: SutraWork) => {
 
   const shortBlocks = work.blocks.filter((block) => block.textSimplified.length < 28).length;
   return work.blocks.length > 80 && shortBlocks / work.blocks.length > 0.35;
+};
+
+const normalizeCachedWork = (work: SutraWork) => {
+  let changed = false;
+  const blocks = work.blocks.map((block) => {
+    const textSimplified = normalizeChineseText(block.textSimplified);
+    const textSource = normalizeChineseText(block.textSource);
+    if (textSimplified === block.textSimplified && textSource === block.textSource) {
+      return block;
+    }
+
+    changed = true;
+    return { ...block, textSimplified, textSource };
+  });
+
+  return {
+    changed,
+    work: changed ? { ...work, blocks } : work,
+  };
 };
 
 const decodeXml = (text: string) =>
@@ -79,9 +102,9 @@ const stripTags = (xml: string) =>
 
 const normalizeChineseText = (text: string) =>
   text
-    .replace(/([\u3400-\u9fff])\s+([\u3400-\u9fff])/g, "$1$2")
-    .replace(/([\u3400-\u9fff])\s+([，。！？；：、」』》）】])/g, "$1$2")
-    .replace(/([「『《（【])\s+([\u3400-\u9fff])/g, "$1$2")
+    .replace(/(?<=[\u3400-\u9fff])\s+(?=[\u3400-\u9fff])/g, "")
+    .replace(/(?<=[\u3400-\u9fff])\s+(?=[，。！？；：、」』》）】])/g, "")
+    .replace(/(?<=[「『《（【])\s+(?=[\u3400-\u9fff])/g, "")
     .replace(/\s+/g, " ")
     .trim();
 

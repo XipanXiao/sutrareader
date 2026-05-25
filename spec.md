@@ -31,3 +31,4 @@ When the reader reaches the end of a sutra, it should show a “下一部” but
 Tapping “下一部” at the end of a sutra should first record the current sutra as read through its end, apply the usual completed-book bookmark cleanup, and then open the next work.
 After tapping “下一部”, the next “记到此处” should replace the carried-forward active bookmark from the previous work instead of keeping both old and new active bookmarks.
 CBETA source line breaks should not be rendered as separate reading paragraphs with large vertical gaps or as visible spaces between Chinese characters; the reader should merge line-level text into comfortable continuous paragraphs.
+Cached sutra text should be normalized on load so older cached works with spaces from source line breaks are repaired automatically.
