@@ -95,6 +95,14 @@ function SutraReaderApp() {
   const globalSegments = useMemo(() => createGlobalProgressSegments(144), []);
   const primaryBookmark =
     workBookmarks.find((bookmark) => bookmark.isPrimaryForWork) ?? workBookmarks[0];
+  const nextCatalogItem = useMemo(() => {
+    const index = catalogIndexById.get(currentWork.id);
+    if (index === undefined) {
+      return undefined;
+    }
+
+    return cbetaCatalog[index + 1];
+  }, [currentWork.id]);
 
   useEffect(() => {
     loadReaderState().then((state) => {
@@ -274,6 +282,8 @@ function SutraReaderApp() {
             saveReaderState({ ...readerState, lastPosition: position });
           }}
           onMarkHere={markHere}
+          nextWorkTitle={nextCatalogItem?.titleSimplified ?? nextCatalogItem?.title}
+          onOpenNextWork={() => nextCatalogItem && openCatalogItem(nextCatalogItem, "reader")}
         />
       ) : null}
     </SafeAreaView>
@@ -663,6 +673,8 @@ function ReaderScreen({
   onBack,
   onPositionChange,
   onMarkHere,
+  nextWorkTitle,
+  onOpenNextWork,
 }: {
   theme: Theme;
   work: SutraWork;
@@ -671,6 +683,8 @@ function ReaderScreen({
   onBack: () => void;
   onPositionChange: (position: ReadingPosition) => void;
   onMarkHere: () => void;
+  nextWorkTitle?: string;
+  onOpenNextWork: () => void;
 }) {
   const listRef = useRef<FlatList<SutraWork["blocks"][number]>>(null);
   const restoringRef = useRef(false);
@@ -734,6 +748,28 @@ function ReaderScreen({
         }}
         scrollEventThrottle={350}
         style={styles.readerScroll}
+        ListFooterComponent={
+          <View style={[styles.readerEndPanel, { borderColor: theme.border }]}>
+            <Text style={[styles.readerEndTitle, { color: theme.text }]}>
+              已到本部末尾
+            </Text>
+            {nextWorkTitle ? (
+              <Text style={[styles.readerEndMeta, { color: theme.muted }]} numberOfLines={2}>
+                下一部：{nextWorkTitle}
+              </Text>
+            ) : (
+              <Text style={[styles.readerEndMeta, { color: theme.muted }]}>
+                已到经藏末尾
+              </Text>
+            )}
+            <View style={styles.readerEndActions}>
+              <Button label="记到此处" theme={theme} onPress={onMarkHere} />
+              {nextWorkTitle ? (
+                <Button label="下一部" theme={theme} filled onPress={onOpenNextWork} />
+              ) : null}
+            </View>
+          </View>
+        }
         renderItem={({ item: block }) => (
           <Pressable
             onPress={() =>
@@ -1394,6 +1430,30 @@ const styles = StyleSheet.create({
   },
   readerScroll: {
     flex: 1,
+  },
+  readerEndPanel: {
+    alignItems: "center",
+    borderTopWidth: 1,
+    marginTop: 14,
+    paddingBottom: 28,
+    paddingTop: 24,
+  },
+  readerEndTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  readerEndMeta: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  readerEndActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    justifyContent: "center",
+    marginTop: 16,
   },
   readerBlock: {
     borderRadius: 8,

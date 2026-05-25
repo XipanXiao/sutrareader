@@ -24,3 +24,4 @@ The active bookmark list should be scrollable when there are many unfinished rea
 The reader should use a single “记到此处” action for saving progress; separate start/bookmark buttons are not needed.
 There should be at most one active bookmark per sutra. Pressing “记到此处” should update that sutra's active bookmark instead of creating duplicates.
 If a bookmark row's delete button is revealed, swiping right or tapping the row should hide the delete button.
+When the reader reaches the end of a sutra, it should show end-of-text actions, including “记到此处” and a “下一部” button that opens the next work in library order when one exists.
