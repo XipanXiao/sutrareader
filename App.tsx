@@ -758,7 +758,7 @@ function ReaderScreen({
         ref={listRef}
         data={work.blocks}
         keyExtractor={(block) => block.id}
-        initialScrollIndex={targetBlockIndex}
+        initialScrollIndex={Math.max(0, targetBlockIndex - 1)}
         initialNumToRender={16}
         maxToRenderPerBatch={12}
         windowSize={9}
@@ -770,9 +770,9 @@ function ReaderScreen({
           });
           setTimeout(() => {
             listRef.current?.scrollToIndex({
-              index: info.index,
+              index: Math.max(0, info.index - 1),
               animated: false,
-              viewPosition: 0.08,
+              viewPosition: 0.16,
             });
           }, 50);
         }}
@@ -826,7 +826,11 @@ function ReaderScreen({
             style={[
               styles.readerBlock,
               activeBlock?.id === block.id
-                ? { backgroundColor: theme.selection }
+                ? {
+                    backgroundColor: theme.selection,
+                    borderColor: theme.accent,
+                    borderWidth: 1,
+                  }
                 : { backgroundColor: "transparent" },
             ]}
           >
@@ -1588,6 +1592,8 @@ const styles = StyleSheet.create({
   },
   readerBlock: {
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "transparent",
     marginBottom: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,

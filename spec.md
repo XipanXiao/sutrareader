@@ -20,6 +20,7 @@ Active bookmarks should represent only readings that are still in progress. When
 The app should keep progress and bookmarks as separate concepts: progress records what has been read, while active bookmarks are only resumable unfinished reading positions.
 Active bookmarks should not show a persistent delete button; deleting should use a left-swipe interaction that reveals a delete confirmation button, similar to deleting a message in iMessage.
 Opening a bookmark in a long sutra should jump directly to the saved position without visibly scrolling from the beginning of the text.
+Opening a bookmark should show the marked text block in view, preferably slightly below the top edge, and visibly highlight the marked block.
 The active bookmark list should be scrollable when there are many unfinished readings, and its left-swipe delete gesture should be easy to trigger without interfering with vertical scrolling.
 The reader should use a single “记到此处” action for saving progress; separate start/bookmark buttons are not needed.
 The “记到此处” action should live in the reader's top-right header area so the bottom of the screen can show more sutra text.
