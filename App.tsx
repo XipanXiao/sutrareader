@@ -826,11 +826,7 @@ function ReaderScreen({
             style={[
               styles.readerBlock,
               activeBlock?.id === block.id
-                ? {
-                    backgroundColor: theme.selection,
-                    borderColor: theme.accent,
-                    borderWidth: 1,
-                  }
+                ? { backgroundColor: theme.selection }
                 : { backgroundColor: "transparent" },
             ]}
           >
@@ -1592,8 +1588,6 @@ const styles = StyleSheet.create({
   },
   readerBlock: {
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "transparent",
     marginBottom: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,

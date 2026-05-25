@@ -20,7 +20,7 @@ Active bookmarks should represent only readings that are still in progress. When
 The app should keep progress and bookmarks as separate concepts: progress records what has been read, while active bookmarks are only resumable unfinished reading positions.
 Active bookmarks should not show a persistent delete button; deleting should use a left-swipe interaction that reveals a delete confirmation button, similar to deleting a message in iMessage.
 Opening a bookmark in a long sutra should jump directly to the saved position without visibly scrolling from the beginning of the text.
-Opening a bookmark should show the marked text block in view, preferably slightly below the top edge, and visibly highlight the marked block.
+Opening a bookmark should show the marked text block in view, preferably slightly below the top edge, and use a subtle background highlight without an outline border.
 The active bookmark list should be scrollable when there are many unfinished readings, and its left-swipe delete gesture should be easy to trigger without interfering with vertical scrolling.
 The reader should use a single “记到此处” action for saving progress; separate start/bookmark buttons are not needed.
 The “记到此处” action should live in the reader's top-right header area so the bottom of the screen can show more sutra text.
@@ -29,4 +29,4 @@ If a bookmark row's delete button is revealed, swiping right or tapping the row 
 The left-swipe delete gesture should stay open after a short left drag instead of snapping closed; a right swipe should close it.
 When the reader reaches the end of a sutra, it should show a “下一部” button that opens the next work in library order when one exists. The sticky “记到此处” button should remain the only progress-marking action, so it should not be duplicated in the end-of-text panel.
 Tapping “下一部” at the end of a sutra should first record the current sutra as read through its end, apply the usual completed-book bookmark cleanup, and then open the next work.
-CBETA source line breaks should not be rendered as separate reading paragraphs with large vertical gaps; the reader should merge line-level text into comfortable continuous paragraphs.
+CBETA source line breaks should not be rendered as separate reading paragraphs with large vertical gaps or as visible spaces between Chinese characters; the reader should merge line-level text into comfortable continuous paragraphs.

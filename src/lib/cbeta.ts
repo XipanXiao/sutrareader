@@ -77,6 +77,14 @@ const stripTags = (xml: string) =>
       .trim(),
   );
 
+const normalizeChineseText = (text: string) =>
+  text
+    .replace(/([\u3400-\u9fff])\s+([\u3400-\u9fff])/g, "$1$2")
+    .replace(/([\u3400-\u9fff])\s+([，。！？；：、」』》）】])/g, "$1$2")
+    .replace(/([「『《（【])\s+([\u3400-\u9fff])/g, "$1$2")
+    .replace(/\s+/g, " ")
+    .trim();
+
 const firstMatch = (xml: string, patterns: RegExp[]) => {
   for (const pattern of patterns) {
     const match = xml.match(pattern);
@@ -124,7 +132,7 @@ const splitIntoBlocks = (item: CbetaCatalogItem, title: string, bodyXml: string)
   };
 
   const flushBlock = () => {
-    const source = stripTags(buffer.join(""));
+    const source = normalizeChineseText(stripTags(buffer.join("")));
     buffer = [];
 
     if (!source || source.length < 2) {
