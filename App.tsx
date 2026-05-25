@@ -131,15 +131,20 @@ function SutraReaderApp() {
     setScreen("reader");
   };
 
-  const openCatalogItem = async (item: CbetaCatalogItem, destination: Screen = "home") => {
+  const openCatalogItem = async (
+    item: CbetaCatalogItem,
+    destination: Screen = "home",
+    stateOverride?: ReaderState,
+  ) => {
+    const baseState = stateOverride ?? readerState;
     setLoadingMessage(`正在载入《${item.titleSimplified ?? item.title}》`);
     try {
       const work = await loadCbetaWork(item);
       setCurrentWork(work);
-      const bookmark = readerState.bookmarks.find((candidate) => candidate.workId === work.id);
+      const bookmark = baseState.bookmarks.find((candidate) => candidate.workId === work.id);
       const start = bookmark?.position ?? offsetToPosition(work, 0);
       setCurrentPosition(start);
-      persist({ ...readerState, lastPosition: start });
+      persist({ ...baseState, lastPosition: start });
       if (destination === "reader") {
         setReaderOpenKey((value) => value + 1);
       }
@@ -218,7 +223,7 @@ function SutraReaderApp() {
       ? readerState.bookmarks.filter((item) => item.workId !== currentWork.id)
       : upsertPrimaryBookmark(readerState.bookmarks, bookmark);
 
-    persist({
+    const nextState = {
       ...readerState,
       activeSessionStart: undefined,
       lastPosition:
@@ -229,11 +234,15 @@ function SutraReaderApp() {
           : position,
       readRanges: nextRanges,
       bookmarks: nextBookmarks,
-    });
+    };
+
+    persist(nextState);
 
     if (returnHome) {
       setScreen("home");
     }
+
+    return normalizeReaderState(nextState);
   };
 
   const markHere = () => {
@@ -245,8 +254,11 @@ function SutraReaderApp() {
       return;
     }
 
-    saveProgressAt(offsetToPosition(currentWork, totalChars(currentWork), 1), false);
-    openCatalogItem(nextCatalogItem, "reader");
+    const nextState = saveProgressAt(
+      offsetToPosition(currentWork, totalChars(currentWork), 1),
+      false,
+    );
+    openCatalogItem(nextCatalogItem, "reader", nextState);
   };
 
   return (

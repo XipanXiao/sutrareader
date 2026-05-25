@@ -26,7 +26,12 @@ export const loadCbetaWork = async (item: CbetaCatalogItem): Promise<SutraWork> 
   const cached = await FileSystem.getInfoAsync(cachePath);
 
   if (cached.exists) {
-    return JSON.parse(await FileSystem.readAsStringAsync(cachePath)) as SutraWork;
+    const work = JSON.parse(await FileSystem.readAsStringAsync(cachePath)) as SutraWork;
+    if (shouldRefreshCachedWork(work)) {
+      await FileSystem.deleteAsync(cachePath, { idempotent: true });
+    } else {
+      return work;
+    }
   }
 
   const response = await fetch(item.rawUrl);
@@ -38,6 +43,15 @@ export const loadCbetaWork = async (item: CbetaCatalogItem): Promise<SutraWork> 
   const work = parseCbetaXml(item, xml);
   await FileSystem.writeAsStringAsync(cachePath, JSON.stringify(work));
   return work;
+};
+
+const shouldRefreshCachedWork = (work: SutraWork) => {
+  if (!work.blocks.length) {
+    return true;
+  }
+
+  const shortBlocks = work.blocks.filter((block) => block.textSimplified.length < 28).length;
+  return work.blocks.length > 80 && shortBlocks / work.blocks.length > 0.35;
 };
 
 const decodeXml = (text: string) =>
@@ -143,7 +157,7 @@ const splitIntoBlocks = (item: CbetaCatalogItem, title: string, bodyXml: string)
     order += 1;
   };
 
-  const tokenPattern = /<head\b[^>]*>[\s\S]*?<\/head>|<lb\b[^>]*\/>|<p\b[^>]*>|<\/p>|<milestone\b[^>]*unit="juan"[^>]*\/>/g;
+  const tokenPattern = /<head\b[^>]*>[\s\S]*?<\/head>|<p\b[^>]*>|<\/p>|<milestone\b[^>]*unit="juan"[^>]*\/>/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -153,7 +167,7 @@ const splitIntoBlocks = (item: CbetaCatalogItem, title: string, bodyXml: string)
 
     if (token.startsWith("<head")) {
       beginSection(stripTags(token));
-    } else if (token.startsWith("<lb") || token === "</p>") {
+    } else if (token === "</p>") {
       flushBlock();
     }
 
