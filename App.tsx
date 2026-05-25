@@ -223,15 +223,18 @@ function SutraReaderApp() {
         currentWork,
         nextRanges.filter((candidate) => candidate.workId === currentWork.id),
       ) >= completedThreshold;
-    const nextBookmarks = workComplete
-      ? readerState.bookmarks.filter((item) => item.workId !== currentWork.id)
-      : upsertPrimaryBookmark(readerState.bookmarks, bookmark);
+    const baseBookmarks = readerState.bookmarks.filter((item) =>
+      carryForward
+        ? item.workId !== currentWork.id
+        : item.id !== readerState.carriedBookmarkId,
+    );
+    const nextBookmarks =
+      workComplete || carryForward
+        ? baseBookmarks.filter((item) => item.workId !== currentWork.id)
+        : upsertPrimaryBookmark(baseBookmarks, bookmark);
     const carriedBookmarkId = carryForward
       ? primaryBookmark?.id
       : undefined;
-    const bookmarks = carriedBookmarkId
-      ? nextBookmarks
-      : nextBookmarks.filter((item) => item.id !== readerState.carriedBookmarkId);
 
     const nextState = {
       ...readerState,
@@ -244,7 +247,7 @@ function SutraReaderApp() {
             : readerState.lastPosition
           : position,
       readRanges: nextRanges,
-      bookmarks,
+      bookmarks: nextBookmarks,
     };
 
     persist(nextState);
