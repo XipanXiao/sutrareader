@@ -223,11 +223,18 @@ function SutraReaderApp() {
         currentWork,
         nextRanges.filter((candidate) => candidate.workId === currentWork.id),
       ) >= completedThreshold;
-    const baseBookmarks = readerState.bookmarks.filter((item) =>
-      carryForward
-        ? item.workId !== currentWork.id
-        : item.id !== readerState.carriedBookmarkId,
+    const carriedBookmark = readerState.bookmarks.find(
+      (item) => item.id === readerState.carriedBookmarkId,
     );
+    const shouldRemoveCarriedBookmark =
+      !carryForward && carriedBookmark && carriedBookmark.workId !== currentWork.id;
+    const baseBookmarks = readerState.bookmarks.filter((item) => {
+      if (carryForward) {
+        return item.workId !== currentWork.id;
+      }
+
+      return shouldRemoveCarriedBookmark ? item.id !== carriedBookmark.id : true;
+    });
     const nextBookmarks =
       workComplete || carryForward
         ? baseBookmarks.filter((item) => item.workId !== currentWork.id)
