@@ -212,41 +212,30 @@ function SutraReaderApp() {
   const saveProgressAt = (
     position: ReadingPosition,
     returnHome: boolean,
-    carryForward: boolean,
+    completeCurrentWork = false,
   ) => {
-    const start = primaryBookmark?.position ?? position;
+    const positionIsAtEnd = isEndPosition(currentWork, position);
+    const shouldCompleteWork = completeCurrentWork || positionIsAtEnd;
+    const start = shouldCompleteWork
+      ? offsetToPosition(currentWork, 0, 0)
+      : primaryBookmark?.position ?? position;
     const range = createReadRange(currentWork, start, position);
     const bookmark = createBookmark(currentWork, position, true);
     const nextRanges = [...readerState.readRanges, range];
     const workComplete =
+      shouldCompleteWork ||
       percentRead(
         currentWork,
         nextRanges.filter((candidate) => candidate.workId === currentWork.id),
       ) >= completedThreshold;
-    const carriedBookmark = readerState.bookmarks.find(
-      (item) => item.id === readerState.carriedBookmarkId,
-    );
-    const shouldRemoveCarriedBookmark =
-      !carryForward && carriedBookmark && carriedBookmark.workId !== currentWork.id;
-    const baseBookmarks = readerState.bookmarks.filter((item) => {
-      if (carryForward) {
-        return item.workId !== currentWork.id;
-      }
-
-      return shouldRemoveCarriedBookmark ? item.id !== carriedBookmark.id : true;
-    });
     const nextBookmarks =
-      workComplete || carryForward
-        ? baseBookmarks.filter((item) => item.workId !== currentWork.id)
-        : upsertPrimaryBookmark(baseBookmarks, bookmark);
-    const carriedBookmarkId = carryForward
-      ? primaryBookmark?.id
-      : undefined;
+      workComplete
+        ? readerState.bookmarks.filter((item) => item.workId !== currentWork.id)
+        : upsertPrimaryBookmark(readerState.bookmarks, bookmark);
 
     const nextState = {
       ...readerState,
       activeSessionStart: undefined,
-      carriedBookmarkId,
       lastPosition:
         workComplete
           ? readerState.lastPosition?.workId === currentWork.id
@@ -1311,6 +1300,10 @@ function upsertPrimaryBookmark(bookmarks: Bookmark[], bookmark: Bookmark) {
     bookmark,
     ...bookmarks.filter((item) => item.workId !== bookmark.workId).slice(0, 40),
   ];
+}
+
+function isEndPosition(work: SutraWork, position: ReadingPosition) {
+  return positionToOffset(work, position) >= totalChars(work) * completedThreshold;
 }
 
 const lightTheme = {

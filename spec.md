@@ -29,7 +29,7 @@ If a bookmark row's delete button is revealed, swiping right or tapping the row 
 The left-swipe delete gesture should stay open after a short left drag instead of snapping closed; a right swipe should close it.
 When the reader reaches the end of a sutra, it should show a “下一部” button that opens the next work in library order when one exists. The sticky “记到此处” button should remain the only progress-marking action, so it should not be duplicated in the end-of-text panel.
 Tapping “下一部” at the end of a sutra should first record the current sutra as read through its end, apply the usual completed-book bookmark cleanup, and then open the next work.
-After tapping “下一部”, the previous work's active bookmark should be removed completely instead of being updated to the end of the previous work. The next “记到此处” in the new work should save only the new active bookmark.
-Saving a new position in the same work without tapping “下一部” should replace that work's active bookmark, not remove it.
+Bookmarks should be removed only when their own work is completed. Saving a new position in an unfinished work should replace that work's active bookmark, not remove it.
+If a bookmark position is at the end of a work, or if tapping “下一部” records the current work through its end, that work should be marked DONE and its active bookmark should be removed completely.
 CBETA source line breaks should not be rendered as separate reading paragraphs with large vertical gaps or as visible spaces between Chinese characters; the reader should merge line-level text into comfortable continuous paragraphs.
 Cached sutra text should be normalized on load so older cached works with spaces from source line breaks are repaired automatically.
