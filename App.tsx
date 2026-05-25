@@ -209,7 +209,11 @@ function SutraReaderApp() {
     });
   };
 
-  const saveProgressAt = (position: ReadingPosition, returnHome: boolean) => {
+  const saveProgressAt = (
+    position: ReadingPosition,
+    returnHome: boolean,
+    carryForward: boolean,
+  ) => {
     const start = primaryBookmark?.position ?? position;
     const range = createReadRange(currentWork, start, position);
     const bookmark = createBookmark(currentWork, position, true);
@@ -222,10 +226,17 @@ function SutraReaderApp() {
     const nextBookmarks = workComplete
       ? readerState.bookmarks.filter((item) => item.workId !== currentWork.id)
       : upsertPrimaryBookmark(readerState.bookmarks, bookmark);
+    const carriedBookmarkId = carryForward
+      ? primaryBookmark?.id
+      : undefined;
+    const bookmarks = carriedBookmarkId
+      ? nextBookmarks
+      : nextBookmarks.filter((item) => item.id !== readerState.carriedBookmarkId);
 
     const nextState = {
       ...readerState,
       activeSessionStart: undefined,
+      carriedBookmarkId,
       lastPosition:
         workComplete
           ? readerState.lastPosition?.workId === currentWork.id
@@ -233,7 +244,7 @@ function SutraReaderApp() {
             : readerState.lastPosition
           : position,
       readRanges: nextRanges,
-      bookmarks: nextBookmarks,
+      bookmarks,
     };
 
     persist(nextState);
@@ -246,7 +257,7 @@ function SutraReaderApp() {
   };
 
   const markHere = () => {
-    saveProgressAt(currentPosition, true);
+    saveProgressAt(currentPosition, true, false);
   };
 
   const openNextWork = () => {
@@ -257,6 +268,7 @@ function SutraReaderApp() {
     const nextState = saveProgressAt(
       offsetToPosition(currentWork, totalChars(currentWork), 1),
       false,
+      true,
     );
     openCatalogItem(nextCatalogItem, "reader", nextState);
   };

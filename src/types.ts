@@ -96,5 +96,6 @@ export type ReaderState = {
   bookmarks: Bookmark[];
   readRanges: ReadRange[];
   activeSessionStart?: ReadingPosition;
+  carriedBookmarkId?: string;
   lastPosition?: ReadingPosition;
 };
