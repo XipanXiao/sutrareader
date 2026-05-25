@@ -25,6 +25,7 @@ The reader should use a single “记到此处” action for saving progress; se
 The “记到此处” action should live in the reader's top-right header area so the bottom of the screen can show more sutra text.
 There should be at most one active bookmark per sutra. Pressing “记到此处” should update that sutra's active bookmark instead of creating duplicates.
 If a bookmark row's delete button is revealed, swiping right or tapping the row should hide the delete button.
+The left-swipe delete gesture should stay open after a short left drag instead of snapping closed; a right swipe should close it.
 When the reader reaches the end of a sutra, it should show a “下一部” button that opens the next work in library order when one exists. The sticky “记到此处” button should remain the only progress-marking action, so it should not be duplicated in the end-of-text panel.
 Tapping “下一部” at the end of a sutra should first record the current sutra as read through its end, apply the usual completed-book bookmark cleanup, and then open the next work.
 CBETA source line breaks should not be rendered as separate reading paragraphs with large vertical gaps; the reader should merge line-level text into comfortable continuous paragraphs.

@@ -457,7 +457,7 @@ function BookmarkRow({
   onOpen: (bookmark: Bookmark) => void;
   onDelete: (bookmark: Bookmark) => void;
 }) {
-  const deleteWidth = 88;
+  const deleteWidth = 96;
   const translateX = useRef(new Animated.Value(0)).current;
   const startOffset = useRef(0);
   const currentOffset = useRef(0);
@@ -481,10 +481,8 @@ function BookmarkRow({
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponderCapture: (_event, gesture) =>
-          Math.abs(gesture.dx) > 5 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.35,
         onMoveShouldSetPanResponder: (_event, gesture) =>
-          Math.abs(gesture.dx) > 5 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.35,
+          Math.abs(gesture.dx) > 3 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.2,
         onPanResponderGrant: () => {
           startOffset.current = currentOffset.current;
         },
@@ -497,15 +495,17 @@ function BookmarkRow({
           translateX.setValue(nextOffset);
         },
         onPanResponderRelease: (_event, gesture) => {
-          if (currentOffset.current < -18 || gesture.vx < -0.18) {
+          if (gesture.dx > 10 || gesture.vx > 0.15) {
+            close();
+          } else if (currentOffset.current < -6 || gesture.dx < -4 || gesture.vx < -0.08) {
             revealDelete();
-          } else if (gesture.dx > 8 || gesture.vx > 0.12) {
-            close();
           } else {
-            close();
+            animateTo(revealed.current ? -deleteWidth : 0);
           }
         },
-        onPanResponderTerminate: close,
+        onPanResponderTerminate: () => {
+          animateTo(revealed.current ? -deleteWidth : 0);
+        },
       }),
     [translateX],
   );
