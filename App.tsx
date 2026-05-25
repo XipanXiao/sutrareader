@@ -96,13 +96,13 @@ function SutraReaderApp() {
   const primaryBookmark =
     workBookmarks.find((bookmark) => bookmark.isPrimaryForWork) ?? workBookmarks[0];
   const nextCatalogItem = useMemo(() => {
-    const index = catalogIndexById.get(currentWork.id) ?? catalogIndexBySourceWork(currentWork);
+    const index = catalogIndexForWork(currentWork);
     if (index === undefined || index >= cbetaCatalog.length - 1) {
       return undefined;
     }
 
     return cbetaCatalog[index + 1];
-  }, [currentWork.id]);
+  }, [currentWork]);
 
   useEffect(() => {
     loadReaderState().then((state) => {
@@ -1067,12 +1067,32 @@ function isWorkInGlobalSegment(workId: string, segment: GlobalProgressSegment) {
   return index !== undefined && index >= segment.startIndex && index < segment.endIndex;
 }
 
-function catalogIndexBySourceWork(work: SutraWork) {
+function catalogIndexForWork(work: SutraWork) {
+  const directIndex = catalogIndexById.get(work.id);
+  if (directIndex !== undefined) {
+    return directIndex;
+  }
+
   if (work.sourcePath) {
     const index = cbetaCatalog.findIndex((item) => item.path === work.sourcePath);
     if (index >= 0) {
       return index;
     }
+  }
+
+  if (work.sourceUrl) {
+    const index = cbetaCatalog.findIndex((item) => item.rawUrl === work.sourceUrl);
+    if (index >= 0) {
+      return index;
+    }
+  }
+
+  const text = `${work.id} ${work.subtitle} ${work.blocks[0]?.workId ?? ""} ${
+    work.blocks[0]?.id ?? ""
+  }`;
+  const index = cbetaCatalog.findIndex((item) => text.includes(item.sourceId));
+  if (index >= 0) {
+    return index;
   }
 
   return undefined;
