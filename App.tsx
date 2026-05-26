@@ -330,6 +330,7 @@ function SutraReaderApp() {
         <LibraryScreen
           theme={theme}
           loadingMessage={loadingMessage}
+          globalProgress={globalProgress}
           onBack={() => setScreen("home")}
           onOpen={openCatalogItem}
         />
@@ -348,6 +349,7 @@ function SutraReaderApp() {
           theme={theme}
           work={currentWork}
           position={currentPosition}
+          progress={progress}
           restoreKey={readerOpenKey}
           onBack={() => setScreen("home")}
           onPositionChange={(position) => {
@@ -605,11 +607,13 @@ function BookmarkRow({
 function LibraryScreen({
   theme,
   loadingMessage,
+  globalProgress,
   onBack,
   onOpen,
 }: {
   theme: Theme;
   loadingMessage?: string;
+  globalProgress: ReturnType<typeof calculateGlobalProgress>;
   onBack: () => void;
   onOpen: (item: CbetaCatalogItem, destination?: Screen) => void;
 }) {
@@ -655,26 +659,54 @@ function LibraryScreen({
       ) : null}
       <ScrollView showsVerticalScrollIndicator={false}>
         {filtered.map((item) => (
-          <Pressable
+          <LibraryRow
             key={item.path}
-            onPress={() => onOpen(item, "reader")}
-            style={[styles.libraryRow, { borderColor: theme.border }]}
-          >
-            <View style={styles.libraryText}>
-              <Text style={[styles.outlineTitle, { color: theme.text }]} numberOfLines={1}>
-                {item.titleSimplified ?? item.title}
-              </Text>
-              <Text style={[styles.outlineMeta, { color: theme.muted }]} numberOfLines={1}>
-                {item.canonTitleSimplified ?? item.canonTitle} - {item.volume} - {item.sourceId}
-              </Text>
-            </View>
-            <Text style={[styles.cacheBadge, { color: theme.accent }]}>
-              {cachedIds[item.id] ? "阅读" : "打开"}
-            </Text>
-          </Pressable>
+            item={item}
+            cached={Boolean(cachedIds[item.id])}
+            progress={globalProgress.workFractions[item.id] ?? 0}
+            theme={theme}
+            onOpen={() => onOpen(item, "reader")}
+          />
         ))}
       </ScrollView>
     </View>
+  );
+}
+
+function LibraryRow({
+  item,
+  cached,
+  progress,
+  theme,
+  onOpen,
+}: {
+  item: CbetaCatalogItem;
+  cached: boolean;
+  progress: number;
+  theme: Theme;
+  onOpen: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onOpen}
+      style={[styles.libraryRow, { borderColor: theme.border }]}
+    >
+      <View style={styles.libraryText}>
+        <Text style={[styles.outlineTitle, { color: theme.text }]} numberOfLines={1}>
+          {item.titleSimplified ?? item.title}
+        </Text>
+        <Text style={[styles.outlineMeta, { color: theme.muted }]} numberOfLines={1}>
+          {item.canonTitleSimplified ?? item.canonTitle} - {item.volume} - {item.sourceId}
+        </Text>
+        <View style={styles.libraryProgressRow}>
+          <WorkProgressBadge theme={theme} progress={progress} />
+          <MiniBar theme={theme} fraction={progress} compact />
+        </View>
+      </View>
+      <Text style={[styles.cacheBadge, { color: theme.accent }]}>
+        {cached ? "阅读" : "打开"}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -751,6 +783,7 @@ function ReaderScreen({
   theme,
   work,
   position,
+  progress,
   restoreKey,
   onBack,
   onPositionChange,
@@ -761,6 +794,7 @@ function ReaderScreen({
   theme: Theme;
   work: SutraWork;
   position: ReadingPosition;
+  progress: number;
   restoreKey: number;
   onBack: () => void;
   onPositionChange: (position: ReadingPosition) => void;
@@ -801,6 +835,10 @@ function ReaderScreen({
       <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={2}>
         {work.subtitle}
       </Text>
+      <View style={styles.readerProgressRow}>
+        <WorkProgressBadge theme={theme} progress={progress} />
+        <MiniBar theme={theme} fraction={progress} />
+      </View>
 
       <FlatList
         key={`${work.id}-${restoreKey}`}
@@ -999,13 +1037,55 @@ function TopBar({
   );
 }
 
-function MiniBar({ theme, fraction }: { theme: Theme; fraction: number }) {
+function WorkProgressBadge({
+  theme,
+  progress,
+}: {
+  theme: Theme;
+  progress: number;
+}) {
+  const complete = progress >= completedThreshold;
+  const started = progress > 0;
+  const label = complete
+    ? "已完成"
+    : started
+      ? `已读 ${formatPercent(progress)}`
+      : "未读";
+  const color = complete ? theme.complete : started ? theme.accent : theme.muted;
+  const borderColor = complete ? theme.complete : theme.border;
+
   return (
-    <View style={[styles.miniBar, { backgroundColor: theme.dot }]}>
+    <View style={[styles.workProgressBadge, { borderColor }]}>
+      <Text style={[styles.workProgressText, { color }]}>{label}</Text>
+    </View>
+  );
+}
+
+function MiniBar({
+  theme,
+  fraction,
+  compact = false,
+}: {
+  theme: Theme;
+  fraction: number;
+  compact?: boolean;
+}) {
+  const complete = fraction >= completedThreshold;
+  return (
+    <View
+      style={[
+        styles.miniBar,
+        compact ? styles.miniBarCompact : null,
+        { backgroundColor: theme.dot },
+      ]}
+    >
       <View
         style={[
           styles.miniBarFill,
-          { backgroundColor: theme.accent, width: `${Math.round(fraction * 100)}%` },
+          {
+            backgroundColor: complete ? theme.complete : theme.accent,
+            width: `${Math.round(fraction * 100)}%`,
+          },
         ]}
       />
     </View>
@@ -1407,6 +1487,7 @@ const lightTheme = {
   deleteBackground: "#b42318",
   onDelete: "#fffaf0",
   partial: "#b08968",
+  complete: "#2f7d4f",
   dot: "#d8d0c2",
   input: "#fffdf7",
   selection: "#efe4d2",
@@ -1422,6 +1503,7 @@ const darkTheme = {
   deleteBackground: "#d92d20",
   onDelete: "#fffaf0",
   partial: "#a98467",
+  complete: "#69c58a",
   dot: "#4a4237",
   input: "#211e19",
   selection: "#2c261f",
@@ -1629,6 +1711,12 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingRight: 12,
   },
+  libraryProgressRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 8,
+  },
   cacheBadge: {
     fontSize: 13,
     fontWeight: "700",
@@ -1655,15 +1743,37 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     width: 76,
   },
+  miniBarCompact: {
+    width: 54,
+  },
   miniBarFill: {
     borderRadius: 4,
     height: 8,
   },
+  workProgressBadge: {
+    alignItems: "center",
+    borderRadius: 7,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 24,
+    paddingHorizontal: 8,
+  },
+  workProgressText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
   readerSubhead: {
     fontSize: 14,
     lineHeight: 20,
-    marginBottom: 10,
+    marginBottom: 8,
     textAlign: "center",
+  },
+  readerProgressRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    justifyContent: "center",
+    marginBottom: 10,
   },
   readerScroll: {
     flex: 1,
