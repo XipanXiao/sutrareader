@@ -68,6 +68,7 @@ export type Bookmark = {
   title: string;
   note?: string;
   isPrimaryForWork: boolean;
+  isCompletionAnchor?: boolean;
   createdAt: string;
   updatedAt: string;
 };

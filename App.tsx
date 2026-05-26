@@ -95,6 +95,7 @@ function SutraReaderApp() {
   const globalSegments = useMemo(() => createGlobalProgressSegments(144), []);
   const primaryBookmark =
     workBookmarks.find((bookmark) => bookmark.isPrimaryForWork) ?? workBookmarks[0];
+  const latestBookmark = readerState.bookmarks[0];
   const nextCatalogItem = useMemo(() => {
     const index = catalogIndexForWork(currentWork);
     if (index === undefined || index >= cbetaCatalog.length - 1) {
@@ -135,6 +136,7 @@ function SutraReaderApp() {
     item: CbetaCatalogItem,
     destination: Screen = "home",
     stateOverride?: ReaderState,
+    positionOverride?: ReadingPosition,
   ) => {
     const baseState = stateOverride ?? readerState;
     setLoadingMessage(`正在载入《${item.titleSimplified ?? item.title}》`);
@@ -142,7 +144,7 @@ function SutraReaderApp() {
       const work = await loadCbetaWork(item);
       setCurrentWork(work);
       const bookmark = baseState.bookmarks.find((candidate) => candidate.workId === work.id);
-      const start = bookmark?.position ?? offsetToPosition(work, 0);
+      const start = positionOverride ?? bookmark?.position ?? offsetToPosition(work, 0);
       setCurrentPosition(start);
       persist({ ...baseState, lastPosition: start });
       if (destination === "reader") {
@@ -221,6 +223,11 @@ function SutraReaderApp() {
       : primaryBookmark?.position ?? position;
     const range = createReadRange(currentWork, start, position);
     const bookmark = createBookmark(currentWork, position, true);
+    const completionAnchor = {
+      ...bookmark,
+      title: `已完成至此 - ${bookmark.title}`,
+      isCompletionAnchor: true,
+    };
     const nextRanges = [...readerState.readRanges, range];
     const workComplete =
       shouldCompleteWork ||
@@ -230,18 +237,13 @@ function SutraReaderApp() {
       ) >= completedThreshold;
     const nextBookmarks =
       workComplete
-        ? readerState.bookmarks.filter((item) => item.workId !== currentWork.id)
-        : upsertPrimaryBookmark(readerState.bookmarks, bookmark);
+        ? upsertCompletionAnchor(readerState.bookmarks, completionAnchor)
+        : upsertPrimaryBookmark(removeCompletionAnchors(readerState.bookmarks), bookmark);
 
     const nextState = {
       ...readerState,
       activeSessionStart: undefined,
-      lastPosition:
-        workComplete
-          ? readerState.lastPosition?.workId === currentWork.id
-            ? undefined
-            : readerState.lastPosition
-          : position,
+      lastPosition: position,
       readRanges: nextRanges,
       bookmarks: nextBookmarks,
     };
@@ -287,10 +289,17 @@ function SutraReaderApp() {
           onOpenLibrary={() => setScreen("library")}
           onOpenOutline={() => setScreen("outline")}
           onContinue={() =>
-            openReaderAt(primaryBookmark?.position ?? readerState.lastPosition ?? currentPosition)
+            latestBookmark
+              ? openBookmark(latestBookmark)
+              : openReaderAt(readerState.lastPosition ?? currentPosition)
           }
           onOpenGlobalSegment={(segment) =>
-            openGlobalSegment(segment, globalProgress.workFractions, openCatalogItem)
+            openGlobalSegment(
+              segment,
+              globalProgress.workFractions,
+              readerState.readRanges,
+              openCatalogItem,
+            )
           }
           onOpenBookmark={openBookmark}
           onDeleteBookmark={deleteBookmark}
@@ -366,7 +375,9 @@ function HomeScreen({
   onLoadDefault: () => void;
 }) {
   const activeBookmarks = readerState.bookmarks.filter(
-    (bookmark) => (globalProgress.workFractions[bookmark.workId] ?? 0) < completedThreshold,
+    (bookmark) =>
+      bookmark.isCompletionAnchor ||
+      (globalProgress.workFractions[bookmark.workId] ?? 0) < completedThreshold,
   );
 
   return (
@@ -1200,14 +1211,30 @@ function positionForBookmarkInWork(bookmark: Bookmark, work: SutraWork): Reading
 function openGlobalSegment(
   segment: GlobalProgressSegment,
   workFractions: Record<string, number>,
-  openCatalogItem: (item: CbetaCatalogItem, destination?: Screen) => void,
+  readRanges: ReaderState["readRanges"],
+  openCatalogItem: (
+    item: CbetaCatalogItem,
+    destination?: Screen,
+    stateOverride?: ReaderState,
+    positionOverride?: ReadingPosition,
+  ) => void,
 ) {
   const items = cbetaCatalog.slice(segment.startIndex, segment.endIndex);
   const target =
     items.find((item) => (workFractions[item.id] ?? 0) < 0.999) ?? items[0];
 
   if (target) {
-    openCatalogItem(target, "reader");
+    loadCbetaWork(target).then((work) => {
+      openCatalogItem(
+        target,
+        "reader",
+        undefined,
+        firstUnreadPosition(
+          work,
+          readRanges.filter((range) => range.workId === work.id),
+        ),
+      );
+    });
   }
 }
 
@@ -1275,14 +1302,26 @@ function normalizeReaderState(state: ReaderState): ReaderState {
 function normalizeBookmarks(bookmarks: Bookmark[], completedWorkIds: Set<string>) {
   const seenIds = new Set<string>();
   const seenWorks = new Set<string>();
+  let keptCompletionAnchor = false;
   const normalized: Bookmark[] = [];
 
   for (const bookmark of bookmarks) {
-    if (
-      seenIds.has(bookmark.id) ||
-      seenWorks.has(bookmark.workId) ||
-      completedWorkIds.has(bookmark.workId)
-    ) {
+    if (seenIds.has(bookmark.id)) {
+      continue;
+    }
+
+    if (completedWorkIds.has(bookmark.workId)) {
+      if (!bookmark.isCompletionAnchor || keptCompletionAnchor) {
+        continue;
+      }
+
+      seenIds.add(bookmark.id);
+      keptCompletionAnchor = true;
+      normalized.push({ ...bookmark, isPrimaryForWork: true, isCompletionAnchor: true });
+      continue;
+    }
+
+    if (seenWorks.has(bookmark.workId)) {
       continue;
     }
 
@@ -1297,9 +1336,47 @@ function normalizeBookmarks(bookmarks: Bookmark[], completedWorkIds: Set<string>
 
 function upsertPrimaryBookmark(bookmarks: Bookmark[], bookmark: Bookmark) {
   return [
-    bookmark,
+    { ...bookmark, isCompletionAnchor: false },
     ...bookmarks.filter((item) => item.workId !== bookmark.workId).slice(0, 40),
   ];
+}
+
+function upsertCompletionAnchor(bookmarks: Bookmark[], bookmark: Bookmark) {
+  return [
+    { ...bookmark, isCompletionAnchor: true },
+    ...bookmarks.filter((item) => item.workId !== bookmark.workId && !item.isCompletionAnchor),
+  ].slice(0, 80);
+}
+
+function removeCompletionAnchors(bookmarks: Bookmark[]) {
+  return bookmarks.filter((bookmark) => !bookmark.isCompletionAnchor);
+}
+
+function firstUnreadPosition(work: SutraWork, ranges: ReaderState["readRanges"]) {
+  const total = totalChars(work);
+  const intervals = ranges
+    .filter(
+      (range) =>
+        typeof range.startOffset === "number" &&
+        typeof range.endOffset === "number" &&
+        range.endOffset > range.startOffset,
+    )
+    .map((range) => [range.startOffset ?? 0, range.endOffset ?? 0] as const)
+    .sort(([a], [b]) => a - b);
+  let cursor = 0;
+
+  for (const [start, end] of intervals) {
+    if (start > cursor) {
+      break;
+    }
+
+    cursor = Math.max(cursor, end);
+    if (cursor >= total) {
+      break;
+    }
+  }
+
+  return offsetToPosition(work, Math.min(cursor, total), total > 0 ? cursor / total : 0);
 }
 
 function isEndPosition(work: SutraWork, position: ReadingPosition) {
