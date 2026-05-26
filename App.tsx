@@ -85,7 +85,9 @@ function SutraReaderApp() {
   );
   const workBookmarks = readerState.bookmarks.filter(
     (bookmark) =>
-      bookmark.workId === currentWork.id && !completedWorkIds.has(bookmark.workId),
+      !bookmark.isCompletionAnchor &&
+      bookmark.workId === currentWork.id &&
+      !completedWorkIds.has(bookmark.workId),
   );
   const progress = percentRead(currentWork, workRanges);
   const globalProgress = useMemo(
@@ -95,7 +97,7 @@ function SutraReaderApp() {
   const globalSegments = useMemo(() => createGlobalProgressSegments(144), []);
   const primaryBookmark =
     workBookmarks.find((bookmark) => bookmark.isPrimaryForWork) ?? workBookmarks[0];
-  const latestBookmark = readerState.bookmarks[0];
+  const latestBookmark = readerState.completionAnchor ?? readerState.bookmarks[0];
   const nextCatalogItem = useMemo(() => {
     const index = catalogIndexForWork(currentWork);
     if (index === undefined || index >= cbetaCatalog.length - 1) {
@@ -143,7 +145,9 @@ function SutraReaderApp() {
     try {
       const work = await loadCbetaWork(item);
       setCurrentWork(work);
-      const bookmark = baseState.bookmarks.find((candidate) => candidate.workId === work.id);
+      const bookmark = baseState.bookmarks.find(
+        (candidate) => !candidate.isCompletionAnchor && candidate.workId === work.id,
+      );
       const start = positionOverride ?? bookmark?.position ?? offsetToPosition(work, 0);
       setCurrentPosition(start);
       persist({ ...baseState, lastPosition: start });
@@ -195,6 +199,18 @@ function SutraReaderApp() {
   };
 
   const deleteBookmark = (bookmark: Bookmark) => {
+    if (readerState.completionAnchor?.id === bookmark.id) {
+      persist({
+        ...readerState,
+        completionAnchor: undefined,
+        lastPosition:
+          readerState.lastPosition?.id === bookmark.position.id
+            ? undefined
+            : readerState.lastPosition,
+      });
+      return;
+    }
+
     const nextBookmarks = readerState.bookmarks.filter((item) => item.id !== bookmark.id);
     const lastPosition =
       readerState.lastPosition?.id === bookmark.position.id ? undefined : readerState.lastPosition;
@@ -237,12 +253,13 @@ function SutraReaderApp() {
       ) >= completedThreshold;
     const nextBookmarks =
       workComplete
-        ? upsertCompletionAnchor(readerState.bookmarks, completionAnchor)
-        : upsertPrimaryBookmark(removeCompletionAnchors(readerState.bookmarks), bookmark);
+        ? readerState.bookmarks.filter((item) => item.workId !== currentWork.id)
+        : upsertPrimaryBookmark(readerState.bookmarks, bookmark);
 
     const nextState = {
       ...readerState,
       activeSessionStart: undefined,
+      completionAnchor: workComplete ? completionAnchor : undefined,
       lastPosition: position,
       readRanges: nextRanges,
       bookmarks: nextBookmarks,
@@ -294,12 +311,15 @@ function SutraReaderApp() {
               : openReaderAt(readerState.lastPosition ?? currentPosition)
           }
           onOpenGlobalSegment={(segment) =>
-            openGlobalSegment(
-              segment,
-              globalProgress.workFractions,
-              readerState.readRanges,
-              openCatalogItem,
-            )
+            readerState.completionAnchor &&
+            isWorkInGlobalSegment(readerState.completionAnchor.workId, segment)
+              ? openBookmark(readerState.completionAnchor)
+              : openGlobalSegment(
+                  segment,
+                  globalProgress.workFractions,
+                  readerState.readRanges,
+                  openCatalogItem,
+                )
           }
           onOpenBookmark={openBookmark}
           onDeleteBookmark={deleteBookmark}
@@ -332,7 +352,11 @@ function SutraReaderApp() {
           onBack={() => setScreen("home")}
           onPositionChange={(position) => {
             setCurrentPosition(position);
-            saveReaderState({ ...readerState, lastPosition: position });
+            setReaderState((state) => {
+              const nextState = { ...state, lastPosition: position };
+              saveReaderState(nextState);
+              return nextState;
+            });
           }}
           onMarkHere={markHere}
           nextWorkTitle={nextCatalogItem?.titleSimplified ?? nextCatalogItem?.title}
@@ -376,9 +400,12 @@ function HomeScreen({
 }) {
   const activeBookmarks = readerState.bookmarks.filter(
     (bookmark) =>
-      bookmark.isCompletionAnchor ||
+      !bookmark.isCompletionAnchor &&
       (globalProgress.workFractions[bookmark.workId] ?? 0) < completedThreshold,
   );
+  const visibleBookmarks = readerState.completionAnchor
+    ? [readerState.completionAnchor, ...activeBookmarks]
+    : activeBookmarks;
 
   return (
     <ScrollView
@@ -410,7 +437,7 @@ function HomeScreen({
             key={segment.id}
             theme={theme}
             fraction={globalSegmentFraction(segment, globalProgress.workFractions)}
-            bookmarked={activeBookmarks.some((bookmark) =>
+            bookmarked={visibleBookmarks.some((bookmark) =>
               isWorkInGlobalSegment(bookmark.workId, segment),
             )}
             label={segment.label}
@@ -441,10 +468,10 @@ function HomeScreen({
         <Text style={[styles.panelTitle, { color: theme.text }]}>书签</Text>
         <ScrollView
           nestedScrollEnabled
-          showsVerticalScrollIndicator={activeBookmarks.length > 4}
-          style={activeBookmarks.length > 4 ? styles.bookmarkList : null}
+          showsVerticalScrollIndicator={visibleBookmarks.length > 4}
+          style={visibleBookmarks.length > 4 ? styles.bookmarkList : null}
         >
-          {activeBookmarks.map((bookmark) => (
+          {visibleBookmarks.map((bookmark) => (
             <BookmarkRow
               key={bookmark.id}
               bookmark={bookmark}
@@ -454,7 +481,7 @@ function HomeScreen({
             />
           ))}
         </ScrollView>
-        {activeBookmarks.length === 0 ? (
+        {visibleBookmarks.length === 0 ? (
           <Text style={[styles.bookmark, { color: theme.muted }]}>暂无书签</Text>
         ) : null}
       </View>
@@ -1288,6 +1315,8 @@ function createBookmark(
 
 function normalizeReaderState(state: ReaderState): ReaderState {
   const completedWorkIds = completedWorkIdsFromRanges(state.readRanges);
+  const completionAnchor =
+    state.completionAnchor ?? state.bookmarks.find((bookmark) => bookmark.isCompletionAnchor);
 
   return {
     ...state,
@@ -1295,14 +1324,19 @@ function normalizeReaderState(state: ReaderState): ReaderState {
       state.activeSessionStart && completedWorkIds.has(state.activeSessionStart.workId)
         ? undefined
         : state.activeSessionStart,
-    bookmarks: normalizeBookmarks(state.bookmarks, completedWorkIds),
+    completionAnchor: completionAnchor
+      ? { ...completionAnchor, isPrimaryForWork: true, isCompletionAnchor: true }
+      : undefined,
+    bookmarks: normalizeBookmarks(
+      state.bookmarks.filter((bookmark) => !bookmark.isCompletionAnchor),
+      completedWorkIds,
+    ),
   };
 }
 
 function normalizeBookmarks(bookmarks: Bookmark[], completedWorkIds: Set<string>) {
   const seenIds = new Set<string>();
   const seenWorks = new Set<string>();
-  let keptCompletionAnchor = false;
   const normalized: Bookmark[] = [];
 
   for (const bookmark of bookmarks) {
@@ -1310,18 +1344,7 @@ function normalizeBookmarks(bookmarks: Bookmark[], completedWorkIds: Set<string>
       continue;
     }
 
-    if (completedWorkIds.has(bookmark.workId)) {
-      if (!bookmark.isCompletionAnchor || keptCompletionAnchor) {
-        continue;
-      }
-
-      seenIds.add(bookmark.id);
-      keptCompletionAnchor = true;
-      normalized.push({ ...bookmark, isPrimaryForWork: true, isCompletionAnchor: true });
-      continue;
-    }
-
-    if (seenWorks.has(bookmark.workId)) {
+    if (seenWorks.has(bookmark.workId) || completedWorkIds.has(bookmark.workId)) {
       continue;
     }
 
@@ -1337,19 +1360,10 @@ function normalizeBookmarks(bookmarks: Bookmark[], completedWorkIds: Set<string>
 function upsertPrimaryBookmark(bookmarks: Bookmark[], bookmark: Bookmark) {
   return [
     { ...bookmark, isCompletionAnchor: false },
-    ...bookmarks.filter((item) => item.workId !== bookmark.workId).slice(0, 40),
+    ...bookmarks
+      .filter((item) => !item.isCompletionAnchor && item.workId !== bookmark.workId)
+      .slice(0, 40),
   ];
-}
-
-function upsertCompletionAnchor(bookmarks: Bookmark[], bookmark: Bookmark) {
-  return [
-    { ...bookmark, isCompletionAnchor: true },
-    ...bookmarks.filter((item) => item.workId !== bookmark.workId && !item.isCompletionAnchor),
-  ].slice(0, 80);
-}
-
-function removeCompletionAnchors(bookmarks: Bookmark[]) {
-  return bookmarks.filter((bookmark) => !bookmark.isCompletionAnchor);
 }
 
 function firstUnreadPosition(work: SutraWork, ranges: ReaderState["readRanges"]) {

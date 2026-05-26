@@ -95,6 +95,7 @@ export type ProgressSegment = {
 
 export type ReaderState = {
   bookmarks: Bookmark[];
+  completionAnchor?: Bookmark;
   readRanges: ReadRange[];
   activeSessionStart?: ReadingPosition;
   lastPosition?: ReadingPosition;
