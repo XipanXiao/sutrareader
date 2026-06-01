@@ -139,11 +139,14 @@ function SutraReaderApp() {
     saveReaderState(normalized);
   };
 
-  const openReaderAt = (position: ReadingPosition) => {
+  const openReaderAt = async (position: ReadingPosition) => {
+    setLoadingMessage(`正在打开《${currentWork.title}》`);
+    await waitForLoadingPaint();
     setCurrentPosition(position);
     persist({ ...readerState, lastPosition: position });
     setReaderOpenKey((value) => value + 1);
     setScreen("reader");
+    setTimeout(() => setLoadingMessage(undefined), 120);
   };
 
   const openCatalogItem = async (
