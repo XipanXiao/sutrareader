@@ -651,12 +651,23 @@ function BookmarkRow({
           translateX.setValue(nextOffset);
         },
         onPanResponderRelease: (_event, gesture) => {
-          if (gesture.dx > 10 || gesture.vx > 0.15) {
+          const projectedOffset = Math.max(
+            -deleteWidth,
+            Math.min(0, currentOffset.current + gesture.vx * 80),
+          );
+          const swipedRight = gesture.dx > 12 && gesture.vx >= 0;
+          const swipedLeft = gesture.dx < -4 || gesture.vx < -0.03;
+          const shouldReveal =
+            swipedLeft ||
+            projectedOffset < -deleteWidth * 0.18 ||
+            currentOffset.current < -deleteWidth * 0.18;
+
+          if (revealed.current && swipedRight) {
             close();
-          } else if (currentOffset.current < -6 || gesture.dx < -4 || gesture.vx < -0.08) {
+          } else if (shouldReveal) {
             revealDelete();
           } else {
-            animateTo(revealed.current ? -deleteWidth : 0);
+            close();
           }
         },
         onPanResponderTerminate: () => {
