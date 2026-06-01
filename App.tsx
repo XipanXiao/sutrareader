@@ -36,6 +36,14 @@ import {
 
 type Screen = "home" | "library" | "outline" | "reader";
 type Theme = typeof lightTheme;
+type ReaderTextItem = {
+  id: string;
+  block: SutraWork["blocks"][number];
+  text: string;
+  charStart: number;
+  charEnd: number;
+  title?: string;
+};
 type GlobalProgressSegment = {
   id: string;
   order: number;
@@ -802,14 +810,61 @@ function ReaderScreen({
   nextWorkTitle?: string;
   onOpenNextWork: () => void;
 }) {
-  const listRef = useRef<FlatList<SutraWork["blocks"][number]>>(null);
+  const listRef = useRef<FlatList<ReaderTextItem>>(null);
   const restoringRef = useRef(false);
-  const targetBlockIndex = Math.max(
+  const readerItems = useMemo(() => createReaderTextItems(work), [work]);
+  const targetItemIndex = Math.max(
     0,
-    work.blocks.findIndex((block) => block.id === position.textBlockId),
+    readerItems.findIndex(
+      (item) =>
+        item.block.id === position.textBlockId &&
+        position.charOffset >= item.charStart &&
+        position.charOffset <= item.charEnd,
+    ),
   );
-  const estimatedLayouts = useMemo(() => createEstimatedBlockLayouts(work), [work]);
+  const estimatedLayouts = useMemo(
+    () => createEstimatedReaderLayouts(readerItems),
+    [readerItems],
+  );
   const activeBlock = work.blocks.find((block) => block.id === position.textBlockId);
+  const workRef = useRef(work);
+  const onPositionChangeRef = useRef(onPositionChange);
+  const viewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 30,
+    minimumViewTime: 120,
+  }).current;
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: Array<{ item?: ReaderTextItem }> }) => {
+      if (restoringRef.current) {
+        return;
+      }
+
+      const item = viewableItems.find((candidate) => candidate.item)?.item;
+      if (!item) {
+        return;
+      }
+
+      const currentWork = workRef.current;
+      const chars = totalChars(currentWork);
+      const absoluteOffset = positionToOffset(
+        currentWork,
+        makePosition(currentWork.id, item.block, item.charStart, 0),
+      );
+      onPositionChangeRef.current(
+        makePosition(
+          currentWork.id,
+          item.block,
+          item.charStart,
+          chars > 0 ? absoluteOffset / chars : 0,
+        ),
+      );
+    },
+  ).current;
+
+  useEffect(() => {
+    workRef.current = work;
+    onPositionChangeRef.current = onPositionChange;
+  }, [onPositionChange, work]);
 
   useEffect(() => {
     restoringRef.current = true;
@@ -843,13 +898,14 @@ function ReaderScreen({
       <FlatList
         key={`${work.id}-${restoreKey}`}
         ref={listRef}
-        data={work.blocks}
-        keyExtractor={(block) => block.id}
-        initialScrollIndex={Math.max(0, targetBlockIndex - 1)}
-        initialNumToRender={16}
-        maxToRenderPerBatch={12}
-        windowSize={9}
+        data={readerItems}
+        keyExtractor={(item) => item.id}
+        initialScrollIndex={Math.max(0, targetItemIndex - 2)}
+        initialNumToRender={28}
+        maxToRenderPerBatch={24}
+        windowSize={17}
         getItemLayout={(_data, index) => estimatedLayouts[index]}
+        removeClippedSubviews={false}
         onScrollToIndexFailed={(info) => {
           listRef.current?.scrollToOffset({
             offset: info.averageItemLength * info.index,
@@ -864,18 +920,8 @@ function ReaderScreen({
           }, 50);
         }}
         showsVerticalScrollIndicator={false}
-        onScroll={(event) => {
-          if (restoringRef.current) {
-            return;
-          }
-          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-          const scrollable = Math.max(1, contentSize.height - layoutMeasurement.height);
-          const fraction = Math.max(0, Math.min(contentOffset.y / scrollable, 1));
-          onPositionChange(
-            offsetToPosition(work, Math.floor(totalChars(work) * fraction), fraction),
-          );
-        }}
-        scrollEventThrottle={350}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
         style={styles.readerScroll}
         ListFooterComponent={
           <View style={[styles.readerEndPanel, { borderColor: theme.border }]}>
@@ -898,30 +944,30 @@ function ReaderScreen({
             </View>
           </View>
         }
-        renderItem={({ item: block }) => (
+        renderItem={({ item }) => (
           <Pressable
             onPress={() =>
               onPositionChange(
                 makePosition(
                   work.id,
-                  block,
-                  Math.floor(block.textSimplified.length / 2),
+                  item.block,
+                  Math.floor((item.charStart + item.charEnd) / 2),
                   position.scrollFraction,
                 ),
               )
             }
             style={[
               styles.readerBlock,
-              activeBlock?.id === block.id
+              activeBlock?.id === item.block.id
                 ? { backgroundColor: theme.selection }
                 : { backgroundColor: "transparent" },
             ]}
           >
-            {block.title ? (
-              <Text style={[styles.blockTitle, { color: theme.accent }]}>{block.title}</Text>
+            {item.title ? (
+              <Text style={[styles.blockTitle, { color: theme.accent }]}>{item.title}</Text>
             ) : null}
             <Text style={[styles.readerText, { color: theme.text }]}>
-              {block.textSimplified}
+              {item.text}
             </Text>
           </Pressable>
         )}
@@ -970,13 +1016,66 @@ function ProgressDot({
   );
 }
 
-function createEstimatedBlockLayouts(work: SutraWork) {
+function createReaderTextItems(work: SutraWork): ReaderTextItem[] {
+  return work.blocks.flatMap((block) => {
+    const chunks = splitReaderText(block.textSimplified);
+    let charStart = 0;
+
+    return chunks.map((text, index) => {
+      const item: ReaderTextItem = {
+        id: `${block.id}-chunk-${index}`,
+        block,
+        text,
+        charStart,
+        charEnd: charStart + text.length,
+        title: index === 0 ? block.title : undefined,
+      };
+      charStart = item.charEnd;
+      return item;
+    });
+  });
+}
+
+function splitReaderText(text: string, targetLength = 260) {
+  if (text.length <= targetLength) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let start = 0;
+
+  while (start < text.length) {
+    let end = Math.min(text.length, start + targetLength);
+
+    if (end < text.length) {
+      const windowStart = Math.min(end - 1, start + Math.floor(targetLength * 0.55));
+      const slice = text.slice(windowStart, end);
+      const punctuationIndex = Math.max(
+        slice.lastIndexOf("。"),
+        slice.lastIndexOf("；"),
+        slice.lastIndexOf("！"),
+        slice.lastIndexOf("？"),
+      );
+
+      if (punctuationIndex >= 0) {
+        end = windowStart + punctuationIndex + 1;
+      }
+    }
+
+    chunks.push(text.slice(start, end));
+    start = end;
+  }
+
+  return chunks;
+}
+
+function createEstimatedReaderLayouts(items: ReaderTextItem[]) {
   const charsPerLine = 14;
   let offset = 0;
 
-  return work.blocks.map((block, index) => {
-    const textLines = Math.max(1, Math.ceil(block.textSimplified.length / charsPerLine));
-    const titleHeight = block.title ? 30 : 0;
+  return items.map((item, index) => {
+    const textLines = Math.max(1, Math.ceil(item.text.length / charsPerLine));
+    const titleHeight = item.title ? 30 : 0;
     const length = 20 + titleHeight + textLines * 42 + 10;
     const layout = { index, length, offset };
     offset += length;
