@@ -155,6 +155,7 @@ function SutraReaderApp() {
     const baseState = stateOverride ?? readerState;
     setLoadingMessage(`正在载入《${item.titleSimplified ?? item.title}》`);
     try {
+      await waitForLoadingPaint();
       const work = await loadCbetaWork(item);
       setCurrentWork(work);
       const bookmark = baseState.bookmarks.find(
@@ -194,6 +195,7 @@ function SutraReaderApp() {
 
     setLoadingMessage(`正在载入《${item.titleSimplified ?? item.title}》`);
     try {
+      await waitForLoadingPaint();
       const work = await loadCbetaWork(item);
       const position = positionForBookmarkInWork(bookmark, work);
       setCurrentWork(work);
@@ -393,6 +395,7 @@ function SutraReaderApp() {
                   globalProgress.workFractions,
                   readerState.readRanges,
                   openCatalogItem,
+                  setLoadingMessage,
                 )
           }
           onOpenBookmark={openBookmark}
@@ -1523,13 +1526,15 @@ function openGlobalSegment(
     stateOverride?: ReaderState,
     positionOverride?: ReadingPosition,
   ) => void,
+  setLoadingMessage?: (message: string | undefined) => void,
 ) {
   const items = cbetaCatalog.slice(segment.startIndex, segment.endIndex);
   const target =
     items.find((item) => (workFractions[item.id] ?? 0) < 0.999) ?? items[0];
 
   if (target) {
-    loadCbetaWork(target).then((work) => {
+    setLoadingMessage?.(`正在载入《${target.titleSimplified ?? target.title}》`);
+    waitForLoadingPaint().then(() => loadCbetaWork(target)).then((work) => {
       openCatalogItem(
         target,
         "reader",
@@ -1541,6 +1546,12 @@ function openGlobalSegment(
       );
     });
   }
+}
+
+function waitForLoadingPaint() {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, 50);
+  });
 }
 
 function formatPercent(value: number) {
