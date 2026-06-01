@@ -1,7 +1,11 @@
 import { StatusBar } from "expo-status-bar";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Pressable,
   PanResponder,
@@ -299,6 +303,68 @@ function SutraReaderApp() {
     openCatalogItem(nextCatalogItem, "reader", nextState);
   };
 
+  const exportProgress = async () => {
+    const fileName = `yuezang-progress-${new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")}.json`;
+    const fileUri = `${FileSystem.cacheDirectory ?? ""}${fileName}`;
+    const payload = {
+      app: "阅藏",
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      state: normalizeReaderState(readerState),
+    };
+
+    try {
+      await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(payload, null, 2));
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          dialogTitle: "导出阅藏进度",
+          mimeType: "application/json",
+          UTI: "public.json",
+        });
+      } else {
+        Alert.alert("已导出", `进度文件已保存到：${fileUri}`);
+      }
+    } catch (error) {
+      Alert.alert(
+        "导出失败",
+        error instanceof Error ? error.message : "无法导出进度文件",
+      );
+    }
+  };
+
+  const importProgress = async () => {
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({
+        type: ["application/json", "text/json", "public.json"],
+        copyToCacheDirectory: true,
+      });
+
+      if (picked.canceled) {
+        return;
+      }
+
+      const uri = picked.assets[0]?.uri;
+      if (!uri) {
+        Alert.alert("导入失败", "没有选择进度文件");
+        return;
+      }
+
+      const raw = await FileSystem.readAsStringAsync(uri);
+      const parsed = JSON.parse(raw);
+      const importedState = parseImportedReaderState(parsed);
+      const nextState = normalizeReaderState(mergeReaderStates(readerState, importedState));
+      persist(nextState);
+      Alert.alert("导入完成", "进度和书签已合并到本机。");
+    } catch (error) {
+      Alert.alert(
+        "导入失败",
+        error instanceof Error ? error.message : "无法读取这个进度文件",
+      );
+    }
+  };
+
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]}>
       <StatusBar style={dark ? "light" : "dark"} />
@@ -331,6 +397,8 @@ function SutraReaderApp() {
           }
           onOpenBookmark={openBookmark}
           onDeleteBookmark={deleteBookmark}
+          onExportProgress={exportProgress}
+          onImportProgress={importProgress}
           onLoadDefault={() => openCatalogItem(defaultCatalogItem)}
         />
       ) : null}
@@ -414,6 +482,8 @@ function HomeScreen({
   onOpenGlobalSegment,
   onOpenBookmark,
   onDeleteBookmark,
+  onExportProgress,
+  onImportProgress,
   onLoadDefault,
 }: {
   theme: Theme;
@@ -429,6 +499,8 @@ function HomeScreen({
   onOpenGlobalSegment: (segment: GlobalProgressSegment) => void;
   onOpenBookmark: (bookmark: Bookmark) => void;
   onDeleteBookmark: (bookmark: Bookmark) => void;
+  onExportProgress: () => void;
+  onImportProgress: () => void;
   onLoadDefault: () => void;
 }) {
   const activeBookmarks = readerState.bookmarks.filter(
@@ -483,6 +555,10 @@ function HomeScreen({
         <Button label="继续" theme={theme} filled onPress={onContinue} />
         <Button label="经藏" theme={theme} onPress={onOpenLibrary} />
         <Button label="目录" theme={theme} onPress={onOpenOutline} />
+      </View>
+      <View style={styles.secondaryActionRow}>
+        <Button label="导出进度" theme={theme} onPress={onExportProgress} />
+        <Button label="导入进度" theme={theme} onPress={onImportProgress} />
       </View>
 
       {currentWork.id === sampleSutra.id ? (
@@ -1515,6 +1591,97 @@ function createBookmark(
   };
 }
 
+function parseImportedReaderState(value: unknown): ReaderState {
+  const maybePayload = value as { state?: unknown };
+  const maybeState = (maybePayload.state ?? value) as Partial<ReaderState>;
+
+  if (!maybeState || !Array.isArray(maybeState.readRanges)) {
+    throw new Error("这不是有效的阅藏进度文件");
+  }
+
+  return {
+    bookmarks: Array.isArray(maybeState.bookmarks) ? maybeState.bookmarks : [],
+    completionAnchor: maybeState.completionAnchor,
+    readRanges: maybeState.readRanges,
+    activeSessionStart: maybeState.activeSessionStart,
+    lastPosition: maybeState.lastPosition,
+  };
+}
+
+function mergeReaderStates(local: ReaderState, incoming: ReaderState): ReaderState {
+  return {
+    bookmarks: mergeBookmarks(local.bookmarks, incoming.bookmarks),
+    completionAnchor: newerBookmark(local.completionAnchor, incoming.completionAnchor),
+    readRanges: mergeReadRanges(local.readRanges, incoming.readRanges),
+    activeSessionStart: newerPosition(local.activeSessionStart, incoming.activeSessionStart),
+    lastPosition: newerPosition(local.lastPosition, incoming.lastPosition),
+  };
+}
+
+function mergeReadRanges(
+  local: ReaderState["readRanges"],
+  incoming: ReaderState["readRanges"],
+) {
+  const byKey = new Map<string, ReaderState["readRanges"][number]>();
+
+  for (const range of [...local, ...incoming]) {
+    const key =
+      range.id ??
+      [
+        range.workId,
+        range.startOffset,
+        range.endOffset,
+        range.start?.textBlockId,
+        range.start?.charOffset,
+        range.end?.textBlockId,
+        range.end?.charOffset,
+      ].join(":");
+    byKey.set(key, range);
+  }
+
+  return Array.from(byKey.values());
+}
+
+function mergeBookmarks(local: Bookmark[], incoming: Bookmark[]) {
+  const byWork = new Map<string, Bookmark>();
+
+  for (const bookmark of [...local, ...incoming].filter((item) => !item.isCompletionAnchor)) {
+    const previous = byWork.get(bookmark.workId);
+    if (!previous || timestamp(bookmark.updatedAt) >= timestamp(previous.updatedAt)) {
+      byWork.set(bookmark.workId, bookmark);
+    }
+  }
+
+  return Array.from(byWork.values()).sort(
+    (a, b) => timestamp(b.updatedAt) - timestamp(a.updatedAt),
+  );
+}
+
+function newerBookmark(local?: Bookmark, incoming?: Bookmark) {
+  if (!local) {
+    return incoming;
+  }
+  if (!incoming) {
+    return local;
+  }
+  return timestamp(incoming.updatedAt) >= timestamp(local.updatedAt) ? incoming : local;
+}
+
+function newerPosition(local?: ReadingPosition, incoming?: ReadingPosition) {
+  if (!local) {
+    return incoming;
+  }
+  if (!incoming) {
+    return local;
+  }
+  return timestamp(incoming.createdAt) >= timestamp(local.createdAt) ? incoming : local;
+}
+
+function timestamp(value?: string) {
+  const time = value ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(time) ? time : 0;
+}
+
 function normalizeReaderState(state: ReaderState): ReaderState {
   const completedWorkIds = completedWorkIdsFromRanges(state.readRanges);
   const completionAnchor =
@@ -1724,6 +1891,12 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 10,
     marginTop: 22,
+  },
+  secondaryActionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 10,
   },
   button: {
     alignItems: "center",

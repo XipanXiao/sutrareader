@@ -37,5 +37,6 @@ Library search results should show each work's local progress, using an explicit
 The reader page should show the current work's local progress near the header, alongside the back and “记到此处” controls.
 Very long works should scroll smoothly without blank virtualized gaps or jumpy correction; the reader should avoid fragile estimated-height virtualization and may render long source paragraphs as smaller continuous reading chunks while preserving bookmark positions within the original work.
 Opening a work should show a visible loading indicator while the text is being loaded and prepared, especially for huge works that take several seconds.
+The app should support manual progress transfer without cloud sync: export reading progress/bookmarks as a JSON backup file through the system share sheet, and import that file on another device by merging read ranges and keeping the newest bookmark per work.
 CBETA source line breaks should not be rendered as separate reading paragraphs with large vertical gaps or as visible spaces between Chinese characters; the reader should merge line-level text into comfortable continuous paragraphs.
 Cached sutra text should be normalized on load so older cached works with spaces from source line breaks are repaired automatically.
