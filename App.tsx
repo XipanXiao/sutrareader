@@ -1,6 +1,7 @@
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Animated,
   Pressable,
   PanResponder,
@@ -168,7 +169,7 @@ function SutraReaderApp() {
       );
       return;
     }
-    setLoadingMessage(undefined);
+    setTimeout(() => setLoadingMessage(undefined), 120);
   };
 
   const openBookmark = async (bookmark: Bookmark) => {
@@ -202,7 +203,7 @@ function SutraReaderApp() {
       );
       return;
     }
-    setLoadingMessage(undefined);
+    setTimeout(() => setLoadingMessage(undefined), 120);
   };
 
   const deleteBookmark = (bookmark: Bookmark) => {
@@ -372,7 +373,30 @@ function SutraReaderApp() {
           onOpenNextWork={openNextWork}
         />
       ) : null}
+      <LoadingOverlay theme={theme} message={loadingMessage} />
     </SafeAreaView>
+  );
+}
+
+function LoadingOverlay({ theme, message }: { theme: Theme; message?: string }) {
+  if (!message) {
+    return null;
+  }
+
+  return (
+    <View style={styles.loadingOverlay} pointerEvents="auto">
+      <View
+        style={[
+          styles.loadingCard,
+          { backgroundColor: theme.input, borderColor: theme.border },
+        ]}
+      >
+        <ActivityIndicator color={theme.accent} size="small" />
+        <Text style={[styles.loadingOverlayText, { color: theme.text }]}>
+          {message}
+        </Text>
+      </View>
+    </View>
   );
 }
 
@@ -1615,6 +1639,31 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
     paddingTop: 12,
+  },
+  loadingOverlay: {
+    alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.18)",
+    bottom: 0,
+    justifyContent: "center",
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
+  loadingCard: {
+    alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    maxWidth: "86%",
+    minHeight: 54,
+    paddingHorizontal: 16,
+  },
+  loadingOverlayText: {
+    flexShrink: 1,
+    fontSize: 15,
+    fontWeight: "700",
   },
   homeContent: {
     paddingBottom: 18,
