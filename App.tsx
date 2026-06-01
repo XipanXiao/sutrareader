@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Pressable,
-  FlatList,
   PanResponder,
   ScrollView,
   StyleSheet,
@@ -810,70 +809,100 @@ function ReaderScreen({
   nextWorkTitle?: string;
   onOpenNextWork: () => void;
 }) {
-  const listRef = useRef<FlatList<ReaderTextItem>>(null);
+  const scrollRef = useRef<ScrollView>(null);
   const restoringRef = useRef(false);
   const readerItems = useMemo(() => createReaderTextItems(work), [work]);
-  const targetItemIndex = Math.max(
-    0,
-    readerItems.findIndex(
+  const targetItem =
+    readerItems.find(
       (item) =>
         item.block.id === position.textBlockId &&
         position.charOffset >= item.charStart &&
         position.charOffset <= item.charEnd,
-    ),
-  );
-  const estimatedLayouts = useMemo(
-    () => createEstimatedReaderLayouts(readerItems),
-    [readerItems],
-  );
+    ) ?? readerItems[0];
   const activeBlock = work.blocks.find((block) => block.id === position.textBlockId);
   const workRef = useRef(work);
   const onPositionChangeRef = useRef(onPositionChange);
-  const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 30,
-    minimumViewTime: 120,
-  }).current;
-  const onViewableItemsChanged = useRef(
-    ({ viewableItems }: { viewableItems: Array<{ item?: ReaderTextItem }> }) => {
-      if (restoringRef.current) {
-        return;
-      }
-
-      const item = viewableItems.find((candidate) => candidate.item)?.item;
-      if (!item) {
-        return;
-      }
-
-      const currentWork = workRef.current;
-      const chars = totalChars(currentWork);
-      const absoluteOffset = positionToOffset(
-        currentWork,
-        makePosition(currentWork.id, item.block, item.charStart, 0),
-      );
-      onPositionChangeRef.current(
-        makePosition(
-          currentWork.id,
-          item.block,
-          item.charStart,
-          chars > 0 ? absoluteOffset / chars : 0,
-        ),
-      );
-    },
-  ).current;
+  const itemLayoutsRef = useRef<Record<string, { y: number; height: number }>>({});
+  const readerItemsRef = useRef(readerItems);
+  const restoreKeyRef = useRef("");
+  const lastReportedItemRef = useRef("");
 
   useEffect(() => {
     workRef.current = work;
     onPositionChangeRef.current = onPositionChange;
-  }, [onPositionChange, work]);
+    readerItemsRef.current = readerItems;
+  }, [onPositionChange, readerItems, work]);
 
   useEffect(() => {
     restoringRef.current = true;
+    restoreKeyRef.current = `${work.id}-${restoreKey}-${position.id}`;
+    itemLayoutsRef.current = {};
+    lastReportedItemRef.current = "";
     const timeout = setTimeout(() => {
       restoringRef.current = false;
-    }, 350);
+    }, 900);
 
     return () => clearTimeout(timeout);
-  }, [restoreKey, work.id]);
+  }, [position.id, restoreKey, work.id]);
+
+  const restoreToItem = (item: ReaderTextItem) => {
+    const layout = itemLayoutsRef.current[item.id];
+    if (!layout || restoreKeyRef.current === "") {
+      return;
+    }
+
+    const ratio = Math.max(
+      0,
+      Math.min(
+        (position.charOffset - item.charStart) / Math.max(1, item.charEnd - item.charStart),
+        1,
+      ),
+    );
+    const y = Math.max(0, layout.y + layout.height * ratio - 18);
+    restoreKeyRef.current = "";
+    scrollRef.current?.scrollTo({ y, animated: false });
+    setTimeout(() => {
+      restoringRef.current = false;
+    }, 120);
+  };
+
+  const reportVisiblePosition = (scrollY: number) => {
+    if (restoringRef.current) {
+      return;
+    }
+
+    const anchorY = scrollY + 28;
+    const item = readerItemsRef.current.find((candidate) => {
+      const layout = itemLayoutsRef.current[candidate.id];
+      return layout && layout.y + layout.height >= anchorY;
+    });
+    const layout = item ? itemLayoutsRef.current[item.id] : undefined;
+
+    if (!item || !layout || item.id === lastReportedItemRef.current) {
+      return;
+    }
+
+    lastReportedItemRef.current = item.id;
+    const currentWork = workRef.current;
+    const chars = totalChars(currentWork);
+    const ratio = Math.max(0, Math.min((anchorY - layout.y) / Math.max(1, layout.height), 1));
+    const charOffset = Math.floor(
+      item.charStart + (item.charEnd - item.charStart) * ratio,
+    );
+    const absoluteOffset = positionToOffset(
+      currentWork,
+      makePosition(currentWork.id, item.block, charOffset, 0),
+    );
+
+    onPositionChangeRef.current(
+      makePosition(
+        currentWork.id,
+        item.block,
+        charOffset,
+        chars > 0 ? absoluteOffset / chars : 0,
+      ),
+    );
+  };
 
   return (
     <View style={styles.screen}>
@@ -895,57 +924,23 @@ function ReaderScreen({
         <MiniBar theme={theme} fraction={progress} />
       </View>
 
-      <FlatList
+      <ScrollView
         key={`${work.id}-${restoreKey}`}
-        ref={listRef}
-        data={readerItems}
-        keyExtractor={(item) => item.id}
-        initialScrollIndex={Math.max(0, targetItemIndex - 2)}
-        initialNumToRender={28}
-        maxToRenderPerBatch={24}
-        windowSize={17}
-        getItemLayout={(_data, index) => estimatedLayouts[index]}
-        removeClippedSubviews={false}
-        onScrollToIndexFailed={(info) => {
-          listRef.current?.scrollToOffset({
-            offset: info.averageItemLength * info.index,
-            animated: false,
-          });
-          setTimeout(() => {
-            listRef.current?.scrollToIndex({
-              index: Math.max(0, info.index - 1),
-              animated: false,
-              viewPosition: 0.16,
-            });
-          }, 50);
-        }}
+        ref={scrollRef}
         showsVerticalScrollIndicator={false}
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
+        onScroll={(event) => reportVisiblePosition(event.nativeEvent.contentOffset.y)}
+        scrollEventThrottle={250}
         style={styles.readerScroll}
-        ListFooterComponent={
-          <View style={[styles.readerEndPanel, { borderColor: theme.border }]}>
-            <Text style={[styles.readerEndTitle, { color: theme.text }]}>
-              已到本部末尾
-            </Text>
-            {nextWorkTitle ? (
-              <Text style={[styles.readerEndMeta, { color: theme.muted }]} numberOfLines={2}>
-                下一部：{nextWorkTitle}
-              </Text>
-            ) : (
-              <Text style={[styles.readerEndMeta, { color: theme.muted }]}>
-                已到经藏末尾
-              </Text>
-            )}
-            <View style={styles.readerEndActions}>
-              {nextWorkTitle ? (
-                <Button label="下一部" theme={theme} filled onPress={onOpenNextWork} />
-              ) : null}
-            </View>
-          </View>
-        }
-        renderItem={({ item }) => (
+      >
+        {readerItems.map((item) => (
           <Pressable
+            key={item.id}
+            onLayout={(event) => {
+              itemLayoutsRef.current[item.id] = event.nativeEvent.layout;
+              if (item.id === targetItem?.id) {
+                restoreToItem(item);
+              }
+            }}
             onPress={() =>
               onPositionChange(
                 makePosition(
@@ -970,9 +965,27 @@ function ReaderScreen({
               {item.text}
             </Text>
           </Pressable>
-        )}
-      />
-
+        ))}
+        <View style={[styles.readerEndPanel, { borderColor: theme.border }]}>
+          <Text style={[styles.readerEndTitle, { color: theme.text }]}>
+            已到本部末尾
+          </Text>
+          {nextWorkTitle ? (
+            <Text style={[styles.readerEndMeta, { color: theme.muted }]} numberOfLines={2}>
+              下一部：{nextWorkTitle}
+            </Text>
+          ) : (
+            <Text style={[styles.readerEndMeta, { color: theme.muted }]}>
+              已到经藏末尾
+            </Text>
+          )}
+          <View style={styles.readerEndActions}>
+            {nextWorkTitle ? (
+              <Button label="下一部" theme={theme} filled onPress={onOpenNextWork} />
+            ) : null}
+          </View>
+        </View>
+      </ScrollView>
     </View>
   );
 }
@@ -1067,20 +1080,6 @@ function splitReaderText(text: string, targetLength = 260) {
   }
 
   return chunks;
-}
-
-function createEstimatedReaderLayouts(items: ReaderTextItem[]) {
-  const charsPerLine = 14;
-  let offset = 0;
-
-  return items.map((item, index) => {
-    const textLines = Math.max(1, Math.ceil(item.text.length / charsPerLine));
-    const titleHeight = item.title ? 30 : 0;
-    const length = 20 + titleHeight + textLines * 42 + 10;
-    const layout = { index, length, offset };
-    offset += length;
-    return layout;
-  });
 }
 
 function Button({
