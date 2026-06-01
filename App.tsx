@@ -918,24 +918,37 @@ function ReaderScreen({
   const itemLayoutsRef = useRef<Record<string, { y: number; height: number }>>({});
   const readerItemsRef = useRef(readerItems);
   const restoreKeyRef = useRef("");
+  const targetItemRef = useRef(targetItem);
   const lastReportedItemRef = useRef("");
 
   useEffect(() => {
     workRef.current = work;
     onPositionChangeRef.current = onPositionChange;
     readerItemsRef.current = readerItems;
-  }, [onPositionChange, readerItems, work]);
+    targetItemRef.current = targetItem;
+  }, [onPositionChange, readerItems, targetItem, work]);
 
   useEffect(() => {
     restoringRef.current = true;
     restoreKeyRef.current = `${work.id}-${restoreKey}-${position.id}`;
     itemLayoutsRef.current = {};
     lastReportedItemRef.current = "";
+    const retry = setInterval(() => {
+      const item = targetItemRef.current;
+      if (item) {
+        restoreToItem(item);
+      }
+    }, 120);
     const timeout = setTimeout(() => {
+      clearInterval(retry);
+      restoreKeyRef.current = "";
       restoringRef.current = false;
-    }, 900);
+    }, 3000);
 
-    return () => clearTimeout(timeout);
+    return () => {
+      clearInterval(retry);
+      clearTimeout(timeout);
+    };
   }, [position.id, restoreKey, work.id]);
 
   const restoreToItem = (item: ReaderTextItem) => {
