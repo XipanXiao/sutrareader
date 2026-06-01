@@ -381,7 +381,6 @@ function SutraReaderApp() {
           readerState={readerState}
           globalProgress={globalProgress}
           currentWorkProgress={progress}
-          loadingMessage={loadingMessage}
           onOpenLibrary={() => setScreen("library")}
           onOpenOutline={() => setScreen("outline")}
           onContinue={() =>
@@ -411,7 +410,6 @@ function SutraReaderApp() {
       {screen === "library" ? (
         <LibraryScreen
           theme={theme}
-          loadingMessage={loadingMessage}
           globalProgress={globalProgress}
           onBack={() => setScreen("home")}
           onOpen={openCatalogItem}
@@ -481,7 +479,6 @@ function HomeScreen({
   readerState,
   globalProgress,
   currentWorkProgress,
-  loadingMessage,
   onOpenLibrary,
   onOpenOutline,
   onContinue,
@@ -498,7 +495,6 @@ function HomeScreen({
   readerState: ReaderState;
   globalProgress: ReturnType<typeof calculateGlobalProgress>;
   currentWorkProgress: number;
-  loadingMessage?: string;
   onOpenLibrary: () => void;
   onOpenOutline: () => void;
   onContinue: () => void;
@@ -573,10 +569,6 @@ function HomeScreen({
             下载第一部 CBETA 文献以替换示例内容。
           </Text>
         </Pressable>
-      ) : null}
-
-      {loadingMessage ? (
-        <Text style={[styles.loadingText, { color: theme.accent }]}>{loadingMessage}</Text>
       ) : null}
 
       <View style={styles.panel}>
@@ -719,13 +711,11 @@ function BookmarkRow({
 
 function LibraryScreen({
   theme,
-  loadingMessage,
   globalProgress,
   onBack,
   onOpen,
 }: {
   theme: Theme;
-  loadingMessage?: string;
   globalProgress: ReturnType<typeof calculateGlobalProgress>;
   onBack: () => void;
   onOpen: (item: CbetaCatalogItem, destination?: Screen) => void;
@@ -767,9 +757,6 @@ function LibraryScreen({
       <Text style={[styles.catalogMeta, { color: theme.muted }]}>
         显示 {filtered.length} / {cbetaCatalog.length.toLocaleString()} 部。轻点经文即可打开并离线缓存。
       </Text>
-      {loadingMessage ? (
-        <Text style={[styles.loadingText, { color: theme.accent }]}>{loadingMessage}</Text>
-      ) : null}
       <ScrollView showsVerticalScrollIndicator={false}>
         {filtered.map((item) => (
           <LibraryRow
@@ -1931,12 +1918,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     lineHeight: 20,
-  },
-  loadingText: {
-    fontSize: 14,
-    fontWeight: "700",
-    lineHeight: 20,
-    marginBottom: 8,
   },
   panel: {
     marginTop: 24,
