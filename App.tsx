@@ -634,13 +634,38 @@ function BookmarkRow({
     animateTo(-deleteWidth);
   };
 
+  const shouldClaimHorizontalSwipe = (dx: number, dy: number) =>
+    Math.abs(dx) > 2 && Math.abs(dx) > Math.abs(dy) * 1.15;
+
+  const settleSwipe = (dx: number, vx: number) => {
+    const leftFlick = vx < -0.02 || dx < -3;
+    const rightFlick = vx > 0.08 || dx > 12;
+    const shouldReveal =
+      leftFlick || currentOffset.current <= -deleteWidth * 0.08;
+
+    if (revealed.current && rightFlick) {
+      close();
+      return;
+    }
+
+    if (shouldReveal) {
+      revealDelete();
+      return;
+    }
+
+    close();
+  };
+
   const panResponder = useMemo(
     () =>
       PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+          shouldClaimHorizontalSwipe(gesture.dx, gesture.dy),
         onMoveShouldSetPanResponder: (_event, gesture) =>
-          Math.abs(gesture.dx) > 3 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.2,
+          shouldClaimHorizontalSwipe(gesture.dx, gesture.dy),
         onPanResponderGrant: () => {
           startOffset.current = currentOffset.current;
+          translateX.stopAnimation();
         },
         onPanResponderMove: (_event, gesture) => {
           const nextOffset = Math.max(
@@ -648,30 +673,19 @@ function BookmarkRow({
             Math.min(0, startOffset.current + gesture.dx),
           );
           currentOffset.current = nextOffset;
+          if (nextOffset < -2) {
+            revealed.current = true;
+          }
           translateX.setValue(nextOffset);
         },
         onPanResponderRelease: (_event, gesture) => {
-          const projectedOffset = Math.max(
-            -deleteWidth,
-            Math.min(0, currentOffset.current + gesture.vx * 80),
-          );
-          const swipedRight = gesture.dx > 12 && gesture.vx >= 0;
-          const swipedLeft = gesture.dx < -4 || gesture.vx < -0.03;
-          const shouldReveal =
-            swipedLeft ||
-            projectedOffset < -deleteWidth * 0.18 ||
-            currentOffset.current < -deleteWidth * 0.18;
-
-          if (revealed.current && swipedRight) {
-            close();
-          } else if (shouldReveal) {
-            revealDelete();
-          } else {
-            close();
-          }
+          settleSwipe(gesture.dx, gesture.vx);
+        },
+        onPanResponderTerminationRequest: () => {
+          return false;
         },
         onPanResponderTerminate: () => {
-          animateTo(revealed.current ? -deleteWidth : 0);
+          settleSwipe(currentOffset.current - startOffset.current, 0);
         },
       }),
     [translateX],
