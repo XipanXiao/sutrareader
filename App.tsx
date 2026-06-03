@@ -557,10 +557,18 @@ function HomeScreen({
         <Button label="继续" theme={theme} filled onPress={onContinue} />
         <Button label="经藏" theme={theme} onPress={onOpenLibrary} />
         <Button label="目录" theme={theme} onPress={onOpenOutline} />
-      </View>
-      <View style={styles.secondaryActionRow}>
-        <Button label="导出进度" theme={theme} onPress={onExportProgress} />
-        <Button label="导入进度" theme={theme} onPress={onImportProgress} />
+        <CompactButton
+          label="导出进度"
+          text="导出"
+          theme={theme}
+          onPress={onExportProgress}
+        />
+        <CompactButton
+          label="导入进度"
+          text="导入"
+          theme={theme}
+          onPress={onImportProgress}
+        />
       </View>
 
       {currentWork.id === sampleSutra.id ? (
@@ -1268,6 +1276,29 @@ function Button({
   );
 }
 
+function CompactButton({
+  label,
+  text,
+  theme,
+  onPress,
+}: {
+  label: string;
+  text: string;
+  theme: Theme;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={[styles.compactButton, { borderColor: theme.border }]}
+    >
+      <Text style={[styles.compactButtonText, { color: theme.text }]}>{text}</Text>
+    </Pressable>
+  );
+}
+
 function TopBar({
   theme,
   title,
@@ -1952,27 +1983,34 @@ const styles = StyleSheet.create({
     width: 9,
   },
   actionRow: {
+    alignItems: "center",
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
+    gap: 8,
     marginTop: 22,
-  },
-  secondaryActionRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginTop: 10,
   },
   button: {
     alignItems: "center",
     borderRadius: 8,
     borderWidth: 1,
+    flexShrink: 1,
     minHeight: 44,
     justifyContent: "center",
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
   },
   buttonText: {
     fontSize: 15,
+    fontWeight: "700",
+  },
+  compactButton: {
+    alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 44,
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  compactButtonText: {
+    fontSize: 14,
     fontWeight: "700",
   },
   notice: {
