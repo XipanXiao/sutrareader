@@ -928,7 +928,7 @@ function ReaderScreen({
   onOpenNextWork: () => void;
 }) {
   const scrollRef = useRef<ScrollView>(null);
-  const restoringRef = useRef(false);
+  const restoringRef = useRef(true);
   const readerItems = useMemo(() => createReaderTextItems(work), [work]);
   const targetItem =
     readerItems.find(
@@ -943,6 +943,8 @@ function ReaderScreen({
   const itemLayoutsRef = useRef<Record<string, { y: number; height: number }>>({});
   const readerItemsRef = useRef(readerItems);
   const restoreKeyRef = useRef("");
+  const restorePositionRef = useRef(position);
+  const restoreSuccessCountRef = useRef(0);
   const targetItemRef = useRef(targetItem);
   const lastReportedItemRef = useRef("");
 
@@ -956,6 +958,8 @@ function ReaderScreen({
   useEffect(() => {
     restoringRef.current = true;
     restoreKeyRef.current = `${work.id}-${restoreKey}-${position.id}`;
+    restorePositionRef.current = position;
+    restoreSuccessCountRef.current = 0;
     itemLayoutsRef.current = {};
     lastReportedItemRef.current = "";
     const retry = setInterval(() => {
@@ -967,8 +971,9 @@ function ReaderScreen({
     const timeout = setTimeout(() => {
       clearInterval(retry);
       restoreKeyRef.current = "";
+      restoreSuccessCountRef.current = 0;
       restoringRef.current = false;
-    }, 3000);
+    }, 8000);
 
     return () => {
       clearInterval(retry);
@@ -982,19 +987,39 @@ function ReaderScreen({
       return;
     }
 
+    const restorePosition = restorePositionRef.current;
     const ratio = Math.max(
       0,
       Math.min(
-        (position.charOffset - item.charStart) / Math.max(1, item.charEnd - item.charStart),
+        (restorePosition.charOffset - item.charStart) /
+          Math.max(1, item.charEnd - item.charStart),
         1,
       ),
     );
     const y = Math.max(0, layout.y + layout.height * ratio - 18);
-    restoreKeyRef.current = "";
     scrollRef.current?.scrollTo({ y, animated: false });
-    setTimeout(() => {
+    restoreSuccessCountRef.current += 1;
+
+    if (restoreSuccessCountRef.current >= 5) {
+      restoreKeyRef.current = "";
       restoringRef.current = false;
-    }, 120);
+    }
+  };
+
+  const restoreApproximately = (contentHeight: number) => {
+    if (restoreKeyRef.current === "" || restoreSuccessCountRef.current > 0) {
+      return;
+    }
+
+    const restorePosition = restorePositionRef.current;
+    if (restorePosition.scrollFraction <= 0) {
+      return;
+    }
+
+    scrollRef.current?.scrollTo({
+      y: Math.max(0, contentHeight * restorePosition.scrollFraction - 32),
+      animated: false,
+    });
   };
 
   const reportVisiblePosition = (scrollY: number) => {
@@ -1060,6 +1085,7 @@ function ReaderScreen({
         ref={scrollRef}
         showsVerticalScrollIndicator={false}
         onScroll={(event) => reportVisiblePosition(event.nativeEvent.contentOffset.y)}
+        onContentSizeChange={(_width, height) => restoreApproximately(height)}
         scrollEventThrottle={250}
         style={styles.readerScroll}
       >
