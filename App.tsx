@@ -955,6 +955,7 @@ function ReaderScreen({
   const restoreSuccessCountRef = useRef(0);
   const targetItemRef = useRef(targetItem);
   const lastReportedItemRef = useRef("");
+  const approximateRestoreFiredRef = useRef(false);
 
   useEffect(() => {
     workRef.current = work;
@@ -968,20 +969,25 @@ function ReaderScreen({
     restoreKeyRef.current = `${work.id}-${restoreKey}-${position.id}`;
     restorePositionRef.current = position;
     restoreSuccessCountRef.current = 0;
+    approximateRestoreFiredRef.current = false;
     itemLayoutsRef.current = {};
     lastReportedItemRef.current = "";
+    
     const retry = setInterval(() => {
       const item = targetItemRef.current;
       if (item) {
         restoreToItem(item);
       }
     }, 120);
+    
+    // Increase timeout to 15 seconds to allow more time for rendering
+    // and ensure approximate fallback has a chance to work
     const timeout = setTimeout(() => {
       clearInterval(retry);
       restoreKeyRef.current = "";
       restoreSuccessCountRef.current = 0;
       restoringRef.current = false;
-    }, 8000);
+    }, 15000);
 
     return () => {
       clearInterval(retry);
@@ -1008,14 +1014,20 @@ function ReaderScreen({
     scrollRef.current?.scrollTo({ y, animated: false });
     restoreSuccessCountRef.current += 1;
 
-    if (restoreSuccessCountRef.current >= 5) {
+    // Reduce success count threshold to 3 for more responsive restoration
+    if (restoreSuccessCountRef.current >= 3) {
       restoreKeyRef.current = "";
       restoringRef.current = false;
     }
   };
 
   const restoreApproximately = (contentHeight: number) => {
-    if (restoreKeyRef.current === "" || restoreSuccessCountRef.current > 0) {
+    // Only fire once and only if precise restoration hasn't started
+    if (
+      approximateRestoreFiredRef.current ||
+      restoreKeyRef.current === "" ||
+      restoreSuccessCountRef.current > 0
+    ) {
       return;
     }
 
@@ -1024,6 +1036,7 @@ function ReaderScreen({
       return;
     }
 
+    approximateRestoreFiredRef.current = true;
     scrollRef.current?.scrollTo({
       y: Math.max(0, contentHeight * restorePosition.scrollFraction - 32),
       animated: false,
