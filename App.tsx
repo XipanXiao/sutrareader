@@ -18,6 +18,7 @@ import {
   useColorScheme,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { WebView, WebViewMessageEvent } from "react-native-webview";
 import { cbetaCatalog } from "./src/data/cbetaCatalog";
 import { sampleSutra } from "./src/data/sampleSutra";
 import { isCbetaWorkCached, loadCbetaWork } from "./src/lib/cbeta";
@@ -979,145 +980,155 @@ function ReaderScreen({
   nextWorkTitle?: string;
   onOpenNextWork: () => void;
 }) {
-  const scrollRef = useRef<ScrollView>(null);
-  const restoringRef = useRef(true);
   const readerItems = useMemo(
     () => createReaderTextItems(work, chineseScript),
     [chineseScript, work],
   );
-  const targetItem =
-    readerItems.find(
-      (item) =>
-        item.block.id === position.textBlockId &&
-        position.charOffset >= item.charStart &&
-        position.charOffset <= item.charEnd,
-    ) ?? readerItems[0];
+  const targetItem = readerItemForPosition(readerItems, position) ?? readerItems[0];
   const activeItemId = targetItem?.id;
   const workRef = useRef(work);
   const onPositionChangeRef = useRef(onPositionChange);
-  const itemLayoutsRef = useRef<Record<string, { y: number; height: number }>>({});
   const readerItemsRef = useRef(readerItems);
-  const restoreKeyRef = useRef("");
-  const restorePositionRef = useRef(position);
-  const targetItemRef = useRef(targetItem);
-  const contentHeightRef = useRef(0);
-  const restoreFrameRef = useRef<number | undefined>(undefined);
   const lastReportedItemRef = useRef("");
+  const [readerSource, setReaderSource] = useState<{ uri: string; key: string }>();
 
   useEffect(() => {
     workRef.current = work;
     onPositionChangeRef.current = onPositionChange;
     readerItemsRef.current = readerItems;
-    targetItemRef.current = targetItem;
-  }, [onPositionChange, readerItems, targetItem, work]);
+  }, [onPositionChange, readerItems, work]);
 
   useEffect(() => {
-    restoringRef.current = true;
-    restoreKeyRef.current = `${work.id}-${restoreKey}-${position.id}`;
-    restorePositionRef.current = position;
-    contentHeightRef.current = 0;
-    itemLayoutsRef.current = {};
+    let cancelled = false;
+    setReaderSource(undefined);
+    const targetAnchorId = targetItem
+      ? readerAnchorId(targetItem, position.charOffset)
+      : undefined;
+    const sourceKey = `${work.id}-${chineseScript}-${restoreKey}-${targetAnchorId ?? "top"}`;
+    const html = createReaderHtml({
+      theme,
+      work,
+      readerItems,
+      activeItemId,
+      nextWorkTitle,
+    });
+
     lastReportedItemRef.current = "";
-    if (restoreFrameRef.current !== undefined) {
-      cancelAnimationFrame(restoreFrameRef.current);
-      restoreFrameRef.current = undefined;
-    }
+
+    writeReaderHtml(work.id, sourceKey, html, targetAnchorId)
+      .then((uri) => {
+        if (!cancelled) {
+          setReaderSource({ uri, key: sourceKey });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setReaderSource({
+            uri: readerDataUri(html, targetAnchorId),
+            key: sourceKey,
+          });
+        }
+      });
 
     return () => {
-      if (restoreFrameRef.current !== undefined) {
-        cancelAnimationFrame(restoreFrameRef.current);
-        restoreFrameRef.current = undefined;
-      }
-      restoreKeyRef.current = "";
-      restoringRef.current = false;
+      cancelled = true;
     };
-  }, [position.id, restoreKey, work.id]);
+  }, [chineseScript, nextWorkTitle, readerItems, restoreKey, theme, work]);
 
-  const targetRestoreY = (item: ReaderTextItem) => {
-    const layout = itemLayoutsRef.current[item.id];
-    if (!layout) {
-      return undefined;
-    }
-
-    const restorePosition = restorePositionRef.current;
-    const ratio = Math.max(
-      0,
-      Math.min(
-        (restorePosition.charOffset - item.charStart) /
-          Math.max(1, item.charEnd - item.charStart),
-        1,
-      ),
-    );
-    return Math.max(0, layout.y + layout.height * ratio - 18);
-  };
-
-  const tryRestoreScroll = () => {
-    const item = targetItemRef.current;
-    if (!item || restoreKeyRef.current === "") {
-      return;
-    }
-
-    const layout = itemLayoutsRef.current[item.id];
-    if (!layout || contentHeightRef.current < layout.y + layout.height) {
-      return;
-    }
-
-    const y = targetRestoreY(item);
-    if (y === undefined) {
-      return;
-    }
-
-    if (restoreFrameRef.current !== undefined) {
-      cancelAnimationFrame(restoreFrameRef.current);
-    }
-
-    restoreFrameRef.current = requestAnimationFrame(() => {
-      restoreFrameRef.current = requestAnimationFrame(() => {
-        scrollRef.current?.scrollTo({ y, animated: false });
-        restoreKeyRef.current = "";
-        restoringRef.current = false;
-        restoreFrameRef.current = undefined;
-      });
-    });
-  };
-
-  const reportVisiblePosition = (scrollY: number) => {
-    if (restoringRef.current) {
-      return;
-    }
-
-    const anchorY = scrollY + 28;
-    const item = readerItemsRef.current.find((candidate) => {
-      const layout = itemLayoutsRef.current[candidate.id];
-      return layout && layout.y + layout.height >= anchorY;
-    });
-    const layout = item ? itemLayoutsRef.current[item.id] : undefined;
-
-    if (!item || !layout || item.id === lastReportedItemRef.current) {
-      return;
-    }
-
-    lastReportedItemRef.current = item.id;
+  const positionFromReaderItem = (
+    item: ReaderTextItem,
+    charOffset: number,
+    scrollFraction: number,
+  ) => {
     const currentWork = workRef.current;
     const chars = totalChars(currentWork);
-    const ratio = Math.max(0, Math.min((anchorY - layout.y) / Math.max(1, layout.height), 1));
-    const charOffset = Math.floor(
-      item.charStart + (item.charEnd - item.charStart) * ratio,
-    );
     const absoluteOffset = positionToOffset(
       currentWork,
-      makePosition(currentWork.id, item.block, charOffset, 0),
+      makePosition(currentWork.id, item.block, charOffset, scrollFraction),
     );
 
-    onPositionChangeRef.current(
-      makePosition(
-        currentWork.id,
-        item.block,
-        charOffset,
-        chars > 0 ? absoluteOffset / chars : 0,
-      ),
+    return makePosition(
+      currentWork.id,
+      item.block,
+      charOffset,
+      chars > 0 ? absoluteOffset / chars : scrollFraction,
     );
   };
+
+  const handleReaderMessage = (event: WebViewMessageEvent) => {
+    let message:
+      | {
+          type: "position" | "select" | "next";
+          itemId?: string;
+          charOffset?: number;
+          scrollFraction?: number;
+        }
+      | undefined;
+
+    try {
+      message = JSON.parse(event.nativeEvent.data);
+    } catch {
+      return;
+    }
+
+    if (!message) {
+      return;
+    }
+
+    if (message.type === "next") {
+      onOpenNextWork();
+      return;
+    }
+
+    const item = readerItemsRef.current.find((candidate) => candidate.id === message.itemId);
+    if (!item) {
+      return;
+    }
+
+    if (message.type === "position" && item.id === lastReportedItemRef.current) {
+      return;
+    }
+
+    if (message.type === "position") {
+      lastReportedItemRef.current = item.id;
+    }
+
+    const charOffset = Math.max(
+      item.charStart,
+      Math.min(message.charOffset ?? item.charStart, item.charEnd),
+    );
+    onPositionChangeRef.current(
+      positionFromReaderItem(item, charOffset, message.scrollFraction ?? 0),
+    );
+  };
+
+  if (!readerSource) {
+    return (
+      <View style={styles.screen}>
+        <TopBar
+          theme={theme}
+          title={workTitle(work, chineseScript)}
+          onBack={onBack}
+          rightAction={
+            <Pressable onPress={onMarkHere} style={styles.topActionButton}>
+              <Text style={[styles.topActionText, { color: theme.accent }]}>记到此处</Text>
+            </Pressable>
+          }
+        />
+        <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={2}>
+          {displayText(work.subtitle, chineseScript)}
+        </Text>
+        <View style={styles.readerProgressRow}>
+          <WorkProgressBadge theme={theme} progress={progress} />
+          <MiniBar theme={theme} fraction={progress} />
+        </View>
+        <View style={styles.readerLoading}>
+          <ActivityIndicator color={theme.accent} />
+          <Text style={[styles.readerLoadingText, { color: theme.muted }]}>正在排版经文</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -1139,72 +1150,16 @@ function ReaderScreen({
         <MiniBar theme={theme} fraction={progress} />
       </View>
 
-      <ScrollView
-        key={`${work.id}-${restoreKey}`}
-        ref={scrollRef}
+      <WebView
+        key={readerSource.key}
+        originWhitelist={["*"]}
+        source={{ uri: readerSource.uri }}
+        onMessage={handleReaderMessage}
+        javaScriptEnabled
+        domStorageEnabled={false}
         showsVerticalScrollIndicator={false}
-        onScroll={(event) => reportVisiblePosition(event.nativeEvent.contentOffset.y)}
-        onContentSizeChange={(_width, height) => {
-          contentHeightRef.current = height;
-          tryRestoreScroll();
-        }}
-        scrollEventThrottle={250}
-        style={styles.readerScroll}
-      >
-        {readerItems.map((item) => (
-          <Pressable
-            key={item.id}
-            onLayout={(event) => {
-              itemLayoutsRef.current[item.id] = event.nativeEvent.layout;
-              if (item.id === targetItem?.id) {
-                tryRestoreScroll();
-              }
-            }}
-            onPress={() =>
-              onPositionChange(
-                makePosition(
-                  work.id,
-                  item.block,
-                  Math.floor((item.charStart + item.charEnd) / 2),
-                  position.scrollFraction,
-                ),
-              )
-            }
-            style={[
-              styles.readerBlock,
-              activeItemId === item.id
-                ? { backgroundColor: theme.selection }
-                : { backgroundColor: "transparent" },
-            ]}
-          >
-            {item.title ? (
-              <Text style={[styles.blockTitle, { color: theme.accent }]}>{item.title}</Text>
-            ) : null}
-            <Text style={[styles.readerText, { color: theme.text }]}>
-              {item.text}
-            </Text>
-          </Pressable>
-        ))}
-        <View style={[styles.readerEndPanel, { borderColor: theme.border }]}>
-          <Text style={[styles.readerEndTitle, { color: theme.text }]}>
-            已到本部末尾
-          </Text>
-          {nextWorkTitle ? (
-            <Text style={[styles.readerEndMeta, { color: theme.muted }]} numberOfLines={2}>
-              下一部：{nextWorkTitle}
-            </Text>
-          ) : (
-            <Text style={[styles.readerEndMeta, { color: theme.muted }]}>
-              已到经藏末尾
-            </Text>
-          )}
-          <View style={styles.readerEndActions}>
-            {nextWorkTitle ? (
-              <Button label="下一部" theme={theme} filled onPress={onOpenNextWork} />
-            ) : null}
-          </View>
-        </View>
-      </ScrollView>
+        style={[styles.readerWebView, { backgroundColor: theme.background }]}
+      />
     </View>
   );
 }
@@ -1271,6 +1226,286 @@ function createReaderTextItems(work: SutraWork, chineseScript: ChineseScript): R
       return item;
     });
   });
+}
+
+function readerItemForPosition(
+  readerItems: ReaderTextItem[],
+  position: ReadingPosition,
+) {
+  return readerItems.find(
+    (item) =>
+      item.block.id === position.textBlockId &&
+      position.charOffset >= item.charStart &&
+      position.charOffset <= item.charEnd,
+  );
+}
+
+const readerAnchorStep = 24;
+
+function readerAnchorOffset(item: ReaderTextItem, charOffset: number) {
+  const length = item.charEnd - item.charStart;
+  if (length <= 0) {
+    return 0;
+  }
+
+  const relative = Math.max(0, Math.min(charOffset - item.charStart, length - 1));
+  return Math.floor(relative / readerAnchorStep) * readerAnchorStep;
+}
+
+function readerAnchorId(item: ReaderTextItem, charOffset: number) {
+  return `${item.id}-c${readerAnchorOffset(item, charOffset)}`;
+}
+
+function createReaderHtml({
+  theme,
+  work,
+  readerItems,
+  activeItemId,
+  nextWorkTitle,
+}: {
+  theme: Theme;
+  work: SutraWork;
+  readerItems: ReaderTextItem[];
+  activeItemId?: string;
+  nextWorkTitle?: string;
+}) {
+  const blocksHtml = readerItems
+    .map((item) => {
+      const title = item.title
+        ? `<div class="block-title">${escapeHtml(item.title)}</div>`
+        : "";
+      const selected = item.id === activeItemId ? " selected" : "";
+      return `<section class="reader-block${selected}" id="${escapeAttribute(
+        item.id,
+      )}" data-item-id="${escapeAttribute(item.id)}" data-block-id="${escapeAttribute(
+        item.block.id,
+      )}" data-char-start="${item.charStart}" data-char-end="${item.charEnd}">${title}<p>${readerTextWithAnchors(
+        item,
+      )}</p></section>`;
+    })
+    .join("");
+  const endPanel = `<section class="end-panel"><h2>已到本部末尾</h2><p>${
+    nextWorkTitle ? `下一部：${escapeHtml(nextWorkTitle)}` : "已到经藏末尾"
+  }</p>${nextWorkTitle ? `<button id="next-work">下一部</button>` : ""}</section>`;
+
+  return `<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<style>
+  :root {
+    color-scheme: light dark;
+    background: ${theme.background};
+  }
+  html {
+    background: ${theme.background};
+    scroll-behavior: auto;
+  }
+  body {
+    margin: 0;
+    padding: 8px 26px 34px;
+    background: ${theme.background};
+    color: ${theme.text};
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .reader-block {
+    margin: 0 0 20px;
+    padding: 12px 0;
+    border-radius: 8px;
+  }
+  .reader-block.selected {
+    background: ${theme.selection};
+  }
+  .block-title {
+    margin: 0 0 8px;
+    color: ${theme.accent};
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.45;
+  }
+  p {
+    margin: 0;
+    color: ${theme.text};
+    font-size: 24px;
+    font-weight: 400;
+    line-height: 1.75;
+    letter-spacing: 0;
+    word-break: break-word;
+  }
+  .reader-anchor {
+    scroll-margin-top: 14px;
+  }
+  .end-panel {
+    margin: 20px 0 0;
+    padding: 20px 0 30px;
+    border-top: 1px solid ${theme.border};
+  }
+  .end-panel h2 {
+    margin: 0 0 8px;
+    color: ${theme.text};
+    font-size: 20px;
+    line-height: 1.4;
+  }
+  .end-panel p {
+    margin: 0 0 14px;
+    color: ${theme.muted};
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  button {
+    appearance: none;
+    border: 1px solid ${theme.accent};
+    border-radius: 8px;
+    background: ${theme.accent};
+    color: ${theme.onAccent};
+    padding: 13px 22px;
+    font-size: 18px;
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+${blocksHtml}
+${endPanel}
+<script>
+(() => {
+  const post = (payload) => {
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+    }
+  };
+  const scrollFraction = () => {
+    const root = document.documentElement;
+    const max = Math.max(1, root.scrollHeight - window.innerHeight);
+    return Math.max(0, Math.min(window.scrollY / max, 1));
+  };
+  const selectBlock = (block) => {
+    document.querySelectorAll(".reader-block.selected").forEach((node) => {
+      node.classList.remove("selected");
+    });
+    block.classList.add("selected");
+  };
+  const messageForBlock = (block, type) => {
+    const rect = block.getBoundingClientRect();
+    const start = Number(block.dataset.charStart || 0);
+    const end = Number(block.dataset.charEnd || start);
+    const ratio = Math.max(0, Math.min((28 - rect.top) / Math.max(1, rect.height), 1));
+    return {
+      type,
+      itemId: block.dataset.itemId,
+      charOffset: Math.floor(start + (end - start) * ratio),
+      scrollFraction: scrollFraction()
+    };
+  };
+  document.addEventListener("click", (event) => {
+    const nextButton = event.target.closest("#next-work");
+    if (nextButton) {
+      post({ type: "next" });
+      return;
+    }
+
+    const block = event.target.closest(".reader-block");
+    if (!block) {
+      return;
+    }
+
+    selectBlock(block);
+    post(messageForBlock(block, "select"));
+  });
+
+  let ticking = false;
+  window.addEventListener("scroll", () => {
+    if (ticking) {
+      return;
+    }
+    ticking = true;
+    window.requestAnimationFrame(() => {
+      ticking = false;
+      const block = Array.from(document.querySelectorAll(".reader-block")).find((candidate) => {
+        const rect = candidate.getBoundingClientRect();
+        return rect.bottom >= 28;
+      });
+      if (block) {
+        post(messageForBlock(block, "position"));
+      }
+    });
+  }, { passive: true });
+})();
+</script>
+</body>
+</html>`;
+}
+
+function readerTextWithAnchors(item: ReaderTextItem) {
+  const parts: string[] = [];
+  const length = item.charEnd - item.charStart;
+  let offset = 0;
+
+  while (offset < length) {
+    const nextOffset = Math.min(length, offset + readerAnchorStep);
+    const anchorId = `${item.id}-c${offset}`;
+    parts.push(
+      `<span id="${escapeAttribute(anchorId)}" class="reader-anchor">${escapeHtml(
+        item.text.slice(offset, nextOffset),
+      )}</span>`,
+    );
+    offset = nextOffset;
+  }
+
+  if (parts.length === 0) {
+    parts.push(
+      `<span id="${escapeAttribute(`${item.id}-c0`)}" class="reader-anchor"></span>`,
+    );
+  }
+
+  return parts.join("");
+}
+
+async function writeReaderHtml(
+  workId: string,
+  sourceKey: string,
+  html: string,
+  targetAnchorId?: string,
+) {
+  const root = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+  if (!root) {
+    return readerDataUri(html, targetAnchorId);
+  }
+
+  const directory = `${root}reader-html`;
+  const info = await FileSystem.getInfoAsync(directory);
+  if (!info.exists) {
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+  }
+
+  const fileUri = `${directory}/${safeFileName(`${workId}-${sourceKey}`)}.html`;
+  await FileSystem.writeAsStringAsync(fileUri, html);
+  return `${fileUri}${targetAnchorId ? `#${encodeURIComponent(targetAnchorId)}` : ""}`;
+}
+
+function readerDataUri(html: string, targetAnchorId?: string) {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}${
+    targetAnchorId ? `#${encodeURIComponent(targetAnchorId)}` : ""
+  }`;
+}
+
+function safeFileName(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 180);
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escapeAttribute(value: string) {
+  return escapeHtml(value);
 }
 
 function splitReaderText(text: string, targetLength = 260) {
@@ -2293,6 +2528,19 @@ const styles = StyleSheet.create({
     gap: 8,
     justifyContent: "center",
     marginBottom: 10,
+  },
+  readerWebView: {
+    flex: 1,
+  },
+  readerLoading: {
+    alignItems: "center",
+    flex: 1,
+    gap: 10,
+    justifyContent: "center",
+  },
+  readerLoadingText: {
+    fontSize: 14,
+    fontWeight: "700",
   },
   readerScroll: {
     flex: 1,
