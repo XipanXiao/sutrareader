@@ -992,7 +992,7 @@ function ReaderScreen({
         position.charOffset >= item.charStart &&
         position.charOffset <= item.charEnd,
     ) ?? readerItems[0];
-  const activeBlock = work.blocks.find((block) => block.id === position.textBlockId);
+  const activeItemId = targetItem?.id;
   const workRef = useRef(work);
   const onPositionChangeRef = useRef(onPositionChange);
   const itemLayoutsRef = useRef<Record<string, { y: number; height: number }>>({});
@@ -1172,7 +1172,7 @@ function ReaderScreen({
             }
             style={[
               styles.readerBlock,
-              activeBlock?.id === item.block.id
+              activeItemId === item.id
                 ? { backgroundColor: theme.selection }
                 : { backgroundColor: "transparent" },
             ]}
