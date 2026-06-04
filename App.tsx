@@ -952,8 +952,9 @@ function ReaderScreen({
   const readerItemsRef = useRef(readerItems);
   const restoreKeyRef = useRef("");
   const restorePositionRef = useRef(position);
-  const restoreSuccessCountRef = useRef(0);
   const targetItemRef = useRef(targetItem);
+  const contentHeightRef = useRef(0);
+  const restoreFrameRef = useRef<number | undefined>(undefined);
   const lastReportedItemRef = useRef("");
 
   useEffect(() => {
@@ -967,32 +968,28 @@ function ReaderScreen({
     restoringRef.current = true;
     restoreKeyRef.current = `${work.id}-${restoreKey}-${position.id}`;
     restorePositionRef.current = position;
-    restoreSuccessCountRef.current = 0;
+    contentHeightRef.current = 0;
     itemLayoutsRef.current = {};
     lastReportedItemRef.current = "";
-    const retry = setInterval(() => {
-      const item = targetItemRef.current;
-      if (item) {
-        restoreToItem(item);
-      }
-    }, 120);
-    const timeout = setTimeout(() => {
-      clearInterval(retry);
-      restoreKeyRef.current = "";
-      restoreSuccessCountRef.current = 0;
-      restoringRef.current = false;
-    }, 8000);
+    if (restoreFrameRef.current !== undefined) {
+      cancelAnimationFrame(restoreFrameRef.current);
+      restoreFrameRef.current = undefined;
+    }
 
     return () => {
-      clearInterval(retry);
-      clearTimeout(timeout);
+      if (restoreFrameRef.current !== undefined) {
+        cancelAnimationFrame(restoreFrameRef.current);
+        restoreFrameRef.current = undefined;
+      }
+      restoreKeyRef.current = "";
+      restoringRef.current = false;
     };
   }, [position.id, restoreKey, work.id]);
 
-  const restoreToItem = (item: ReaderTextItem) => {
+  const targetRestoreY = (item: ReaderTextItem) => {
     const layout = itemLayoutsRef.current[item.id];
-    if (!layout || restoreKeyRef.current === "") {
-      return;
+    if (!layout) {
+      return undefined;
     }
 
     const restorePosition = restorePositionRef.current;
@@ -1004,29 +1001,36 @@ function ReaderScreen({
         1,
       ),
     );
-    const y = Math.max(0, layout.y + layout.height * ratio - 18);
-    scrollRef.current?.scrollTo({ y, animated: false });
-    restoreSuccessCountRef.current += 1;
-
-    if (restoreSuccessCountRef.current >= 5) {
-      restoreKeyRef.current = "";
-      restoringRef.current = false;
-    }
+    return Math.max(0, layout.y + layout.height * ratio - 18);
   };
 
-  const restoreApproximately = (contentHeight: number) => {
-    if (restoreKeyRef.current === "" || restoreSuccessCountRef.current > 0) {
+  const tryRestoreScroll = () => {
+    const item = targetItemRef.current;
+    if (!item || restoreKeyRef.current === "") {
       return;
     }
 
-    const restorePosition = restorePositionRef.current;
-    if (restorePosition.scrollFraction <= 0) {
+    const layout = itemLayoutsRef.current[item.id];
+    if (!layout || contentHeightRef.current < layout.y + layout.height) {
       return;
     }
 
-    scrollRef.current?.scrollTo({
-      y: Math.max(0, contentHeight * restorePosition.scrollFraction - 32),
-      animated: false,
+    const y = targetRestoreY(item);
+    if (y === undefined) {
+      return;
+    }
+
+    if (restoreFrameRef.current !== undefined) {
+      cancelAnimationFrame(restoreFrameRef.current);
+    }
+
+    restoreFrameRef.current = requestAnimationFrame(() => {
+      restoreFrameRef.current = requestAnimationFrame(() => {
+        scrollRef.current?.scrollTo({ y, animated: false });
+        restoreKeyRef.current = "";
+        restoringRef.current = false;
+        restoreFrameRef.current = undefined;
+      });
     });
   };
 
@@ -1093,7 +1097,10 @@ function ReaderScreen({
         ref={scrollRef}
         showsVerticalScrollIndicator={false}
         onScroll={(event) => reportVisiblePosition(event.nativeEvent.contentOffset.y)}
-        onContentSizeChange={(_width, height) => restoreApproximately(height)}
+        onContentSizeChange={(_width, height) => {
+          contentHeightRef.current = height;
+          tryRestoreScroll();
+        }}
         scrollEventThrottle={250}
         style={styles.readerScroll}
       >
@@ -1103,7 +1110,7 @@ function ReaderScreen({
             onLayout={(event) => {
               itemLayoutsRef.current[item.id] = event.nativeEvent.layout;
               if (item.id === targetItem?.id) {
-                restoreToItem(item);
+                tryRestoreScroll();
               }
             }}
             onPress={() =>
