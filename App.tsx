@@ -2,6 +2,7 @@ import { StatusBar } from "expo-status-bar";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+import { Converter } from "opencc-js";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -40,6 +41,7 @@ import {
 
 type Screen = "home" | "library" | "outline" | "reader";
 type Theme = typeof lightTheme;
+type ChineseScript = "simplified" | "traditional";
 type ReaderTextItem = {
   id: string;
   block: SutraWork["blocks"][number];
@@ -57,6 +59,7 @@ type GlobalProgressSegment = {
 };
 
 const makeId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const toTraditional = Converter({ from: "cn", to: "tw" });
 const completedThreshold = 0.999;
 const defaultCatalogItem =
   cbetaCatalog.find((item) => item.id === "T01n0001") ?? cbetaCatalog[0];
@@ -87,6 +90,7 @@ function SutraReaderApp() {
   );
   const [loadingMessage, setLoadingMessage] = useState<string>();
   const [readerOpenKey, setReaderOpenKey] = useState(0);
+  const [chineseScript, setChineseScript] = useState<ChineseScript>("simplified");
 
   const workRanges = readerState.readRanges.filter(
     (range) => range.workId === currentWork.id,
@@ -140,7 +144,7 @@ function SutraReaderApp() {
   };
 
   const openReaderAt = async (position: ReadingPosition) => {
-    setLoadingMessage(`正在打开《${currentWork.title}》`);
+    setLoadingMessage(`正在打开《${workTitle(currentWork, chineseScript)}》`);
     await waitForLoadingPaint();
     setCurrentPosition(position);
     persist({ ...readerState, lastPosition: position });
@@ -156,7 +160,7 @@ function SutraReaderApp() {
     positionOverride?: ReadingPosition,
   ) => {
     const baseState = stateOverride ?? readerState;
-    setLoadingMessage(`正在载入《${item.titleSimplified ?? item.title}》`);
+    setLoadingMessage(`正在载入《${catalogTitle(item, chineseScript)}》`);
     try {
       await waitForLoadingPaint();
       const work = await loadCbetaWork(item);
@@ -196,7 +200,7 @@ function SutraReaderApp() {
       return;
     }
 
-    setLoadingMessage(`正在载入《${item.titleSimplified ?? item.title}》`);
+    setLoadingMessage(`正在载入《${catalogTitle(item, chineseScript)}》`);
     try {
       await waitForLoadingPaint();
       const work = await loadCbetaWork(item);
@@ -308,6 +312,13 @@ function SutraReaderApp() {
     openCatalogItem(nextCatalogItem, "reader", nextState);
   };
 
+  const toggleChineseScript = () => {
+    setChineseScript((value) =>
+      value === "simplified" ? "traditional" : "simplified",
+    );
+    setReaderOpenKey((value) => value + 1);
+  };
+
   const exportProgress = async () => {
     const fileName = `yuezang-progress-${new Date()
       .toISOString()
@@ -380,6 +391,7 @@ function SutraReaderApp() {
           globalSegments={globalSegments}
           readerState={readerState}
           globalProgress={globalProgress}
+          chineseScript={chineseScript}
           currentWorkProgress={progress}
           onOpenLibrary={() => setScreen("library")}
           onOpenOutline={() => setScreen("outline")}
@@ -404,6 +416,7 @@ function SutraReaderApp() {
           onDeleteBookmark={deleteBookmark}
           onExportProgress={exportProgress}
           onImportProgress={importProgress}
+          onToggleChineseScript={toggleChineseScript}
           onLoadDefault={() => openCatalogItem(defaultCatalogItem)}
         />
       ) : null}
@@ -411,6 +424,7 @@ function SutraReaderApp() {
         <LibraryScreen
           theme={theme}
           globalProgress={globalProgress}
+          chineseScript={chineseScript}
           onBack={() => setScreen("home")}
           onOpen={openCatalogItem}
         />
@@ -419,6 +433,7 @@ function SutraReaderApp() {
         <OutlineScreen
           theme={theme}
           work={currentWork}
+          chineseScript={chineseScript}
           readerState={readerState}
           onBack={() => setScreen("home")}
           onOpen={openReaderAt}
@@ -428,6 +443,7 @@ function SutraReaderApp() {
         <ReaderScreen
           theme={theme}
           work={currentWork}
+          chineseScript={chineseScript}
           position={currentPosition}
           progress={progress}
           restoreKey={readerOpenKey}
@@ -441,7 +457,9 @@ function SutraReaderApp() {
             });
           }}
           onMarkHere={markHere}
-          nextWorkTitle={nextCatalogItem?.titleSimplified ?? nextCatalogItem?.title}
+          nextWorkTitle={
+            nextCatalogItem ? catalogTitle(nextCatalogItem, chineseScript) : undefined
+          }
           onOpenNextWork={openNextWork}
         />
       ) : null}
@@ -478,6 +496,7 @@ function HomeScreen({
   globalSegments,
   readerState,
   globalProgress,
+  chineseScript,
   currentWorkProgress,
   onOpenLibrary,
   onOpenOutline,
@@ -487,6 +506,7 @@ function HomeScreen({
   onDeleteBookmark,
   onExportProgress,
   onImportProgress,
+  onToggleChineseScript,
   onLoadDefault,
 }: {
   theme: Theme;
@@ -494,6 +514,7 @@ function HomeScreen({
   globalSegments: GlobalProgressSegment[];
   readerState: ReaderState;
   globalProgress: ReturnType<typeof calculateGlobalProgress>;
+  chineseScript: ChineseScript;
   currentWorkProgress: number;
   onOpenLibrary: () => void;
   onOpenOutline: () => void;
@@ -503,6 +524,7 @@ function HomeScreen({
   onDeleteBookmark: (bookmark: Bookmark) => void;
   onExportProgress: () => void;
   onImportProgress: () => void;
+  onToggleChineseScript: () => void;
   onLoadDefault: () => void;
 }) {
   const activeBookmarks = readerState.bookmarks.filter(
@@ -534,7 +556,7 @@ function HomeScreen({
 
       <Text style={[styles.catalogMeta, { color: theme.muted }]}>
         已读完 {globalProgress.completedWorks.toLocaleString()} /{" "}
-        {cbetaCatalog.length.toLocaleString()} 部。当前：{currentWork.title}（
+        {cbetaCatalog.length.toLocaleString()} 部。当前：{workTitle(currentWork, chineseScript)}（
         {Math.round(currentWorkProgress * 100)}%）。
       </Text>
 
@@ -569,6 +591,15 @@ function HomeScreen({
           theme={theme}
           onPress={onImportProgress}
         />
+        <CompactButton
+          label={
+            chineseScript === "simplified" ? "当前显示简体，轻点切换繁体" : "当前顯示繁體，輕點切換簡體"
+          }
+          text={chineseScript === "simplified" ? "简" : "繁"}
+          theme={theme}
+          filled
+          onPress={onToggleChineseScript}
+        />
       </View>
 
       {currentWork.id === sampleSutra.id ? (
@@ -591,6 +622,7 @@ function HomeScreen({
               key={bookmark.id}
               bookmark={bookmark}
               theme={theme}
+              chineseScript={chineseScript}
               onOpen={onOpenBookmark}
               onDelete={onDeleteBookmark}
             />
@@ -613,11 +645,13 @@ function HomeScreen({
 function BookmarkRow({
   bookmark,
   theme,
+  chineseScript,
   onOpen,
   onDelete,
 }: {
   bookmark: Bookmark;
   theme: Theme;
+  chineseScript: ChineseScript;
   onOpen: (bookmark: Bookmark) => void;
   onDelete: (bookmark: Bookmark) => void;
 }) {
@@ -626,6 +660,7 @@ function BookmarkRow({
   const startOffset = useRef(0);
   const currentOffset = useRef(0);
   const revealed = useRef(false);
+  const bookmarkTitle = displayText(bookmark.title, chineseScript);
 
   const animateTo = (value: number) => {
     currentOffset.current = value;
@@ -703,7 +738,7 @@ function BookmarkRow({
     <View style={[styles.bookmarkSwipeRow, { borderColor: theme.border }]}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`删除书签 ${bookmark.title}`}
+        accessibilityLabel={`删除书签 ${bookmarkTitle}`}
         onPress={() => onDelete(bookmark)}
         style={[
           styles.bookmarkDeleteConfirm,
@@ -721,7 +756,7 @@ function BookmarkRow({
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`打开书签 ${bookmark.title}`}
+          accessibilityLabel={`打开书签 ${bookmarkTitle}`}
           onPress={() => {
             if (revealed.current) {
               close();
@@ -733,7 +768,7 @@ function BookmarkRow({
           style={styles.bookmarkOpenTarget}
         >
           <Text style={[styles.bookmark, { color: theme.muted }]} numberOfLines={2}>
-            {bookmark.title}
+            {bookmarkTitle}
           </Text>
           <Text style={[styles.bookmarkAction, { color: theme.accent }]}>打开</Text>
         </Pressable>
@@ -745,11 +780,13 @@ function BookmarkRow({
 function LibraryScreen({
   theme,
   globalProgress,
+  chineseScript,
   onBack,
   onOpen,
 }: {
   theme: Theme;
   globalProgress: ReturnType<typeof calculateGlobalProgress>;
+  chineseScript: ChineseScript;
   onBack: () => void;
   onOpen: (item: CbetaCatalogItem, destination?: Screen) => void;
 }) {
@@ -798,6 +835,7 @@ function LibraryScreen({
             cached={Boolean(cachedIds[item.id])}
             progress={globalProgress.workFractions[item.id] ?? 0}
             theme={theme}
+            chineseScript={chineseScript}
             onOpen={() => onOpen(item, "reader")}
           />
         ))}
@@ -811,12 +849,14 @@ function LibraryRow({
   cached,
   progress,
   theme,
+  chineseScript,
   onOpen,
 }: {
   item: CbetaCatalogItem;
   cached: boolean;
   progress: number;
   theme: Theme;
+  chineseScript: ChineseScript;
   onOpen: () => void;
 }) {
   return (
@@ -826,10 +866,10 @@ function LibraryRow({
     >
       <View style={styles.libraryText}>
         <Text style={[styles.outlineTitle, { color: theme.text }]} numberOfLines={1}>
-          {item.titleSimplified ?? item.title}
+          {catalogTitle(item, chineseScript)}
         </Text>
         <Text style={[styles.outlineMeta, { color: theme.muted }]} numberOfLines={1}>
-          {item.canonTitleSimplified ?? item.canonTitle} - {item.volume} - {item.sourceId}
+          {catalogCanonTitle(item, chineseScript)} - {item.volume} - {item.sourceId}
         </Text>
         <View style={styles.libraryProgressRow}>
           <WorkProgressBadge theme={theme} progress={progress} />
@@ -846,12 +886,14 @@ function LibraryRow({
 function OutlineScreen({
   theme,
   work,
+  chineseScript,
   readerState,
   onBack,
   onOpen,
 }: {
   theme: Theme;
   work: SutraWork;
+  chineseScript: ChineseScript;
   readerState: ReaderState;
   onBack: () => void;
   onOpen: (position: ReadingPosition) => void;
@@ -897,7 +939,7 @@ function OutlineScreen({
             >
               <View style={styles.libraryText}>
                 <Text style={[styles.outlineTitle, { color: theme.text }]} numberOfLines={1}>
-                  {section.title}
+                  {displayText(section.title, chineseScript)}
                 </Text>
                 <Text style={[styles.outlineMeta, { color: theme.muted }]}>
                   {section.blockIds.length} 段 · 已读 {Math.round(fraction * 100)}%
@@ -915,6 +957,7 @@ function OutlineScreen({
 function ReaderScreen({
   theme,
   work,
+  chineseScript,
   position,
   progress,
   restoreKey,
@@ -926,6 +969,7 @@ function ReaderScreen({
 }: {
   theme: Theme;
   work: SutraWork;
+  chineseScript: ChineseScript;
   position: ReadingPosition;
   progress: number;
   restoreKey: number;
@@ -937,7 +981,10 @@ function ReaderScreen({
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const restoringRef = useRef(true);
-  const readerItems = useMemo(() => createReaderTextItems(work), [work]);
+  const readerItems = useMemo(
+    () => createReaderTextItems(work, chineseScript),
+    [chineseScript, work],
+  );
   const targetItem =
     readerItems.find(
       (item) =>
@@ -1076,7 +1123,7 @@ function ReaderScreen({
     <View style={styles.screen}>
       <TopBar
         theme={theme}
-        title={work.title}
+        title={workTitle(work, chineseScript)}
         onBack={onBack}
         rightAction={
           <Pressable onPress={onMarkHere} style={styles.topActionButton}>
@@ -1085,7 +1132,7 @@ function ReaderScreen({
         }
       />
       <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={2}>
-        {work.subtitle}
+        {displayText(work.subtitle, chineseScript)}
       </Text>
       <View style={styles.readerProgressRow}>
         <WorkProgressBadge theme={theme} progress={progress} />
@@ -1201,9 +1248,11 @@ function ProgressDot({
   );
 }
 
-function createReaderTextItems(work: SutraWork): ReaderTextItem[] {
+function createReaderTextItems(work: SutraWork, chineseScript: ChineseScript): ReaderTextItem[] {
   return work.blocks.flatMap((block) => {
-    const chunks = splitReaderText(block.textSimplified);
+    const sourceText =
+      chineseScript === "traditional" ? block.textSource : block.textSimplified;
+    const chunks = splitReaderText(sourceText);
     let charStart = 0;
 
     return chunks.map((text, index) => {
@@ -1213,7 +1262,10 @@ function createReaderTextItems(work: SutraWork): ReaderTextItem[] {
         text,
         charStart,
         charEnd: charStart + text.length,
-        title: index === 0 ? block.title : undefined,
+        title:
+          index === 0 && block.title
+            ? displayText(block.title, chineseScript)
+            : undefined,
       };
       charStart = item.charEnd;
       return item;
@@ -1287,11 +1339,13 @@ function CompactButton({
   label,
   text,
   theme,
+  filled,
   onPress,
 }: {
   label: string;
   text: string;
   theme: Theme;
+  filled?: boolean;
   onPress: () => void;
 }) {
   return (
@@ -1299,9 +1353,22 @@ function CompactButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
-      style={[styles.compactButton, { borderColor: theme.border }]}
+      style={[
+        styles.compactButton,
+        {
+          backgroundColor: filled ? theme.accent : "transparent",
+          borderColor: filled ? theme.accent : theme.border,
+        },
+      ]}
     >
-      <Text style={[styles.compactButtonText, { color: theme.text }]}>{text}</Text>
+      <Text
+        style={[
+          styles.compactButtonText,
+          { color: filled ? theme.onAccent : theme.text },
+        ]}
+      >
+        {text}
+      </Text>
     </Pressable>
   );
 }
@@ -1644,6 +1711,34 @@ function waitForLoadingPaint() {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, 50);
   });
+}
+
+function displayText(value: string | undefined, chineseScript: ChineseScript) {
+  if (!value) {
+    return "";
+  }
+
+  return chineseScript === "traditional" ? toTraditional(value) : value;
+}
+
+function catalogTitle(item: CbetaCatalogItem, chineseScript: ChineseScript) {
+  return chineseScript === "traditional" ? item.title : item.titleSimplified ?? item.title;
+}
+
+function catalogCanonTitle(item: CbetaCatalogItem, chineseScript: ChineseScript) {
+  return chineseScript === "traditional"
+    ? item.canonTitle
+    : item.canonTitleSimplified ?? item.canonTitle;
+}
+
+function workTitle(work: SutraWork, chineseScript: ChineseScript) {
+  if (chineseScript === "simplified") {
+    return work.title;
+  }
+
+  const index = catalogIndexForWork(work);
+  const catalogItem = index === undefined ? undefined : cbetaCatalog[index];
+  return catalogItem?.title ?? displayText(work.title, chineseScript);
 }
 
 function formatPercent(value: number) {
