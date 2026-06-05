@@ -40,7 +40,7 @@ import {
   SutraWork,
 } from "./src/types";
 
-type Screen = "home" | "library" | "outline" | "reader";
+type Screen = "home" | "category" | "library" | "outline" | "reader";
 type Theme = typeof lightTheme;
 type ChineseScript = "simplified" | "traditional";
 type ReaderTextItem = {
@@ -56,7 +56,16 @@ type GlobalProgressSegment = {
   order: number;
   startIndex: number;
   endIndex: number;
+  workIndices?: number[];
   label: string;
+  categoryId: string;
+  categoryLabel: string;
+};
+type GlobalProgressCategoryGroup = {
+  id: string;
+  categoryId: string;
+  label: string;
+  segments: GlobalProgressSegment[];
 };
 
 const makeId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -92,6 +101,8 @@ function SutraReaderApp() {
   const [loadingMessage, setLoadingMessage] = useState<string>();
   const [readerOpenKey, setReaderOpenKey] = useState(0);
   const [chineseScript, setChineseScript] = useState<ChineseScript>("simplified");
+  const [selectedCategory, setSelectedCategory] =
+    useState<GlobalProgressCategoryGroup>();
 
   const workRanges = readerState.readRanges.filter(
     (range) => range.workId === currentWork.id,
@@ -401,7 +412,26 @@ function SutraReaderApp() {
               ? openBookmark(latestBookmark)
               : openReaderAt(readerState.lastPosition ?? currentPosition)
           }
-          onOpenGlobalSegment={(segment) =>
+          onOpenCategory={(category) => {
+            setSelectedCategory(category);
+            setScreen("category");
+          }}
+          onOpenBookmark={openBookmark}
+          onDeleteBookmark={deleteBookmark}
+          onExportProgress={exportProgress}
+          onImportProgress={importProgress}
+          onToggleChineseScript={toggleChineseScript}
+          onLoadDefault={() => openCatalogItem(defaultCatalogItem)}
+        />
+      ) : null}
+      {screen === "category" && selectedCategory ? (
+        <CategoryProgressScreen
+          theme={theme}
+          category={selectedCategory}
+          globalProgress={globalProgress}
+          readerState={readerState}
+          onBack={() => setScreen("home")}
+          onOpenSegment={(segment) =>
             readerState.completionAnchor &&
             isWorkInGlobalSegment(readerState.completionAnchor.workId, segment)
               ? openBookmark(readerState.completionAnchor)
@@ -413,12 +443,6 @@ function SutraReaderApp() {
                   setLoadingMessage,
                 )
           }
-          onOpenBookmark={openBookmark}
-          onDeleteBookmark={deleteBookmark}
-          onExportProgress={exportProgress}
-          onImportProgress={importProgress}
-          onToggleChineseScript={toggleChineseScript}
-          onLoadDefault={() => openCatalogItem(defaultCatalogItem)}
         />
       ) : null}
       {screen === "library" ? (
@@ -502,7 +526,7 @@ function HomeScreen({
   onOpenLibrary,
   onOpenOutline,
   onContinue,
-  onOpenGlobalSegment,
+  onOpenCategory,
   onOpenBookmark,
   onDeleteBookmark,
   onExportProgress,
@@ -520,7 +544,7 @@ function HomeScreen({
   onOpenLibrary: () => void;
   onOpenOutline: () => void;
   onContinue: () => void;
-  onOpenGlobalSegment: (segment: GlobalProgressSegment) => void;
+  onOpenCategory: (category: GlobalProgressCategoryGroup) => void;
   onOpenBookmark: (bookmark: Bookmark) => void;
   onDeleteBookmark: (bookmark: Bookmark) => void;
   onExportProgress: () => void;
@@ -536,6 +560,7 @@ function HomeScreen({
   const visibleBookmarks = readerState.completionAnchor
     ? [readerState.completionAnchor, ...activeBookmarks]
     : activeBookmarks;
+  const progressGroups = groupGlobalProgressSegments(globalSegments);
 
   return (
     <ScrollView
@@ -561,17 +586,17 @@ function HomeScreen({
         {Math.round(currentWorkProgress * 100)}%）。
       </Text>
 
-      <View style={styles.mapGrid}>
-        {globalSegments.map((segment) => (
-          <ProgressDot
-            key={segment.id}
+      <View style={styles.mapGroups}>
+        {progressGroups.map((group) => (
+          <CategoryProgressCard
+            key={group.id}
             theme={theme}
-            fraction={globalSegmentFraction(segment, globalProgress.workFractions)}
+            category={group}
+            fraction={categoryProgressFraction(group, globalProgress.workFractions)}
             bookmarked={visibleBookmarks.some((bookmark) =>
-              isWorkInGlobalSegment(bookmark.workId, segment),
+              isWorkInCategory(bookmark.workId, group.categoryId),
             )}
-            label={segment.label}
-            onPress={() => onOpenGlobalSegment(segment)}
+            onPress={() => onOpenCategory(group)}
           />
         ))}
       </View>
@@ -640,6 +665,113 @@ function HomeScreen({
         </Text>
       ) : null}
     </ScrollView>
+  );
+}
+
+function CategoryProgressCard({
+  theme,
+  category,
+  fraction,
+  bookmarked,
+  onPress,
+}: {
+  theme: Theme;
+  category: GlobalProgressCategoryGroup;
+  fraction: number;
+  bookmarked: boolean;
+  onPress: () => void;
+}) {
+  const complete = fraction >= completedThreshold;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${category.label}，已读 ${Math.round(fraction * 100)}%`}
+      onPress={onPress}
+      style={[
+        styles.categoryCard,
+        {
+          backgroundColor: theme.input,
+          borderColor: bookmarked ? theme.accent : theme.border,
+        },
+      ]}
+    >
+      <View
+        style={[
+          styles.categoryCardFill,
+          {
+            backgroundColor: complete ? theme.complete : theme.partial,
+            width: `${Math.round(fraction * 100)}%`,
+          },
+        ]}
+      />
+      <Text style={[styles.categoryCardTitle, { color: theme.text }]} numberOfLines={2}>
+        {category.label}
+      </Text>
+      <Text style={[styles.categoryCardMeta, { color: theme.muted }]}>
+        {formatPercent(fraction)}
+      </Text>
+    </Pressable>
+  );
+}
+
+function CategoryProgressScreen({
+  theme,
+  category,
+  globalProgress,
+  readerState,
+  onBack,
+  onOpenSegment,
+}: {
+  theme: Theme;
+  category: GlobalProgressCategoryGroup;
+  globalProgress: ReturnType<typeof calculateGlobalProgress>;
+  readerState: ReaderState;
+  onBack: () => void;
+  onOpenSegment: (segment: GlobalProgressSegment) => void;
+}) {
+  const segments = useMemo(() => createCategoryDetailSegments(category), [category]);
+  const fraction = categoryProgressFraction(category, globalProgress.workFractions);
+  const visibleBookmarks = readerState.bookmarks.filter(
+    (bookmark) =>
+      !bookmark.isCompletionAnchor &&
+      (globalProgress.workFractions[bookmark.workId] ?? 0) < completedThreshold,
+  );
+
+  return (
+    <View style={styles.screen}>
+      <TopBar theme={theme} title={category.label} onBack={onBack} />
+      <Text style={[styles.categoryDetailMeta, { color: theme.muted }]}>
+        已读 {formatPercent(fraction)} · {categoryWorkIndices(category.categoryId).length} 部
+      </Text>
+      <View style={[styles.categoryDetailBar, { backgroundColor: theme.dot }]}>
+        <View
+          style={[
+            styles.categoryDetailBarFill,
+            {
+              backgroundColor: fraction >= completedThreshold ? theme.complete : theme.accent,
+              width: `${Math.round(fraction * 100)}%`,
+            },
+          ]}
+        />
+      </View>
+      <ScrollView
+        contentContainerStyle={styles.categoryDotMap}
+        showsVerticalScrollIndicator={false}
+      >
+        {segments.map((segment) => (
+          <ProgressDot
+            key={segment.id}
+            theme={theme}
+            fraction={globalSegmentFraction(segment, globalProgress.workFractions)}
+            bookmarked={visibleBookmarks.some((bookmark) =>
+              isWorkInGlobalSegment(bookmark.workId, segment),
+            )}
+            label={segment.label}
+            onPress={() => onOpenSegment(segment)}
+          />
+        ))}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -1693,6 +1825,10 @@ function createGlobalProgressSegments(segmentCount: number): GlobalProgressSegme
     const endIndex = Math.floor((cbetaCatalog.length * (index + 1)) / segmentCount);
     const first = cbetaCatalog[startIndex];
     const last = cbetaCatalog[Math.max(startIndex, endIndex - 1)];
+    const categoryItem =
+      cbetaCatalog[Math.floor((startIndex + Math.max(startIndex, endIndex - 1)) / 2)] ??
+      first;
+    const category = categoryForCatalogItem(categoryItem);
 
     return {
       id: `global-${index}`,
@@ -1702,8 +1838,136 @@ function createGlobalProgressSegments(segmentCount: number): GlobalProgressSegme
       label: `${first?.canonTitle ?? "CBETA"} ${first?.sourceId ?? ""} - ${
         last?.sourceId ?? ""
       }`,
+      categoryId: category.id,
+      categoryLabel: category.label,
     };
   });
+}
+
+function groupGlobalProgressSegments(
+  segments: GlobalProgressSegment[],
+): GlobalProgressCategoryGroup[] {
+  const groupsByCategory = new Map<string, GlobalProgressCategoryGroup>();
+
+  for (const segment of segments) {
+    const current = groupsByCategory.get(segment.categoryId);
+    if (current) {
+      current.segments.push(segment);
+    } else {
+      groupsByCategory.set(segment.categoryId, {
+        id: segment.categoryId,
+        categoryId: segment.categoryId,
+        label: segment.categoryLabel,
+        segments: [segment],
+      });
+    }
+  }
+
+  return [...groupsByCategory.values()].sort(
+    (left, right) =>
+      categoryDisplayOrder(left.categoryId) - categoryDisplayOrder(right.categoryId),
+  );
+}
+
+const categoryOrder = [
+  "T-阿含部",
+  "T-本缘部",
+  "T-般若部",
+  "T-法华部",
+  "T-华严部",
+  "T-宝积涅槃大集部",
+  "T-经集部",
+  "T-密教部",
+  "other",
+];
+
+function categoryDisplayOrder(categoryId: string) {
+  const index = categoryOrder.indexOf(categoryId);
+  return index >= 0 ? index : categoryOrder.length;
+}
+
+function categoryWorkIndices(categoryId: string) {
+  return cbetaCatalog
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => categoryForCatalogItem(item).id === categoryId)
+    .map(({ index }) => index);
+}
+
+function isWorkInCategory(workId: string, categoryId: string) {
+  const index = catalogIndexById.get(workId);
+  return index !== undefined && categoryForCatalogItem(cbetaCatalog[index]).id === categoryId;
+}
+
+function categoryProgressFraction(
+  category: GlobalProgressCategoryGroup,
+  workFractions: Record<string, number>,
+) {
+  const indices = categoryWorkIndices(category.categoryId);
+  if (indices.length === 0) {
+    return 0;
+  }
+
+  const total = indices.reduce(
+    (sum, index) => sum + (workFractions[cbetaCatalog[index]?.id ?? ""] ?? 0),
+    0,
+  );
+  return total / indices.length;
+}
+
+function createCategoryDetailSegments(category: GlobalProgressCategoryGroup) {
+  const workIndices = categoryWorkIndices(category.categoryId);
+  const segmentCount = Math.min(workIndices.length, 96);
+  if (segmentCount === 0) {
+    return [];
+  }
+
+  return Array.from({ length: segmentCount }, (_, index) => {
+    const start = Math.floor((workIndices.length * index) / segmentCount);
+    const end = Math.max(start + 1, Math.floor((workIndices.length * (index + 1)) / segmentCount));
+    const segmentIndices = workIndices.slice(start, end);
+    const first = cbetaCatalog[segmentIndices[0]];
+    const last = cbetaCatalog[segmentIndices[segmentIndices.length - 1]];
+
+    return {
+      id: `${category.id}-detail-${index}`,
+      order: index,
+      startIndex: segmentIndices[0],
+      endIndex: (segmentIndices[segmentIndices.length - 1] ?? segmentIndices[0]) + 1,
+      workIndices: segmentIndices,
+      label: `${category.label} ${first?.sourceId ?? ""} - ${last?.sourceId ?? ""}`,
+      categoryId: category.categoryId,
+      categoryLabel: category.label,
+    };
+  });
+}
+
+const taishoCategoryRanges = [
+  [1, 151, "阿含部"],
+  [152, 219, "本缘部"],
+  [220, 261, "般若部"],
+  [262, 277, "法华部"],
+  [278, 309, "华严部"],
+  [310, 424, "宝积涅槃大集部"],
+  [425, 847, "经集部"],
+  [848, 1420, "密教部"],
+] as const;
+
+function categoryForCatalogItem(item?: CbetaCatalogItem) {
+  if (!item) {
+    return { id: "unknown", label: "CBETA" };
+  }
+
+  if (item.canon === "T") {
+    const number = Number.parseInt(item.number, 10);
+    const range = taishoCategoryRanges.find(
+      ([start, end]) => number >= start && number <= end,
+    );
+    if (range) {
+      return { id: `T-${range[2]}`, label: range[2] };
+    }
+  }
+
+  return { id: "other", label: "其他" };
 }
 
 function calculateGlobalProgress(readRanges: ReaderState["readRanges"]) {
@@ -1816,7 +2080,7 @@ function globalSegmentFraction(
   segment: GlobalProgressSegment,
   workFractions: Record<string, number>,
 ) {
-  const items = cbetaCatalog.slice(segment.startIndex, segment.endIndex);
+  const items = catalogItemsForSegment(segment);
   if (items.length === 0) {
     return 0;
   }
@@ -1827,7 +2091,22 @@ function globalSegmentFraction(
 
 function isWorkInGlobalSegment(workId: string, segment: GlobalProgressSegment) {
   const index = catalogIndexById.get(workId);
-  return index !== undefined && index >= segment.startIndex && index < segment.endIndex;
+  return (
+    index !== undefined &&
+    (segment.workIndices
+      ? segment.workIndices.includes(index)
+      : index >= segment.startIndex && index < segment.endIndex)
+  );
+}
+
+function catalogItemsForSegment(segment: GlobalProgressSegment) {
+  if (segment.workIndices) {
+    return segment.workIndices
+      .map((index) => cbetaCatalog[index])
+      .filter((item): item is CbetaCatalogItem => Boolean(item));
+  }
+
+  return cbetaCatalog.slice(segment.startIndex, segment.endIndex);
 }
 
 function catalogIndexForWork(work: SutraWork) {
@@ -1922,7 +2201,7 @@ function openGlobalSegment(
   ) => void,
   setLoadingMessage?: (message: string | undefined) => void,
 ) {
-  const items = cbetaCatalog.slice(segment.startIndex, segment.endIndex);
+  const items = catalogItemsForSegment(segment);
   const target =
     items.find((item) => (workFractions[item.id] ?? 0) < 0.999) ?? items[0];
 
@@ -2297,13 +2576,72 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: "700",
   },
-  mapGrid: {
+  mapGroups: {
+    alignItems: "flex-start",
+    alignSelf: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    justifyContent: "center",
+    maxWidth: 350,
+    width: "100%",
+  },
+  categoryCard: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    aspectRatio: 1,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexBasis: "31%",
+    justifyContent: "center",
+    overflow: "hidden",
+    paddingHorizontal: 8,
+    position: "relative",
+  },
+  categoryCardFill: {
+    bottom: 0,
+    left: 0,
+    opacity: 0.18,
+    position: "absolute",
+    top: 0,
+  },
+  categoryCardTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    letterSpacing: 0,
+    lineHeight: 24,
+    textAlign: "center",
+  },
+  categoryCardMeta: {
+    fontSize: 13,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  categoryDetailMeta: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  categoryDetailBar: {
+    alignSelf: "center",
+    borderRadius: 5,
+    height: 10,
+    marginBottom: 14,
+    maxWidth: 260,
+    overflow: "hidden",
+    width: "72%",
+  },
+  categoryDetailBarFill: {
+    borderRadius: 5,
+    height: 10,
+  },
+  categoryDotMap: {
     alignContent: "center",
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "center",
-    marginHorizontal: "auto",
-    maxWidth: 336,
+    paddingBottom: 26,
     rowGap: 5,
   },
   dotHit: {
