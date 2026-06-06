@@ -443,6 +443,7 @@ function SutraReaderApp() {
                   setLoadingMessage,
                 )
           }
+          onOpenWork={(item) => openCatalogItem(item, "reader")}
         />
       ) : null}
       {screen === "library" ? (
@@ -721,6 +722,7 @@ function CategoryProgressScreen({
   readerState,
   onBack,
   onOpenSegment,
+  onOpenWork,
 }: {
   theme: Theme;
   category: GlobalProgressCategoryGroup;
@@ -728,9 +730,25 @@ function CategoryProgressScreen({
   readerState: ReaderState;
   onBack: () => void;
   onOpenSegment: (segment: GlobalProgressSegment) => void;
+  onOpenWork: (item: CbetaCatalogItem) => void;
 }) {
   const segments = useMemo(() => createCategoryDetailSegments(category), [category]);
+  const firstUnread =
+    segments.find((segment) => globalSegmentFraction(segment, globalProgress.workFractions) < completedThreshold) ??
+    segments[0];
+  const [selectedSegmentId, setSelectedSegmentId] = useState(firstUnread?.id);
+  useEffect(() => {
+    setSelectedSegmentId(firstUnread?.id);
+  }, [category.id, firstUnread?.id]);
+  const selectedSegment =
+    segments.find((segment) => segment.id === selectedSegmentId) ?? firstUnread;
+  const selectedItems = selectedSegment ? catalogItemsForSegment(selectedSegment) : [];
   const fraction = categoryProgressFraction(category, globalProgress.workFractions);
+  const categoryIndices = categoryWorkIndices(category.categoryId);
+  const inProgressCount = categoryIndices.filter((index) => {
+    const progress = globalProgress.workFractions[cbetaCatalog[index]?.id ?? ""] ?? 0;
+    return progress > 0 && progress < completedThreshold;
+  }).length;
   const visibleBookmarks = readerState.bookmarks.filter(
     (bookmark) =>
       !bookmark.isCompletionAnchor &&
@@ -741,7 +759,8 @@ function CategoryProgressScreen({
     <View style={styles.screen}>
       <TopBar theme={theme} title={category.label} onBack={onBack} />
       <Text style={[styles.categoryDetailMeta, { color: theme.muted }]}>
-        已读 {formatPercent(fraction)} · {categoryWorkIndices(category.categoryId).length} 部
+        已读 {formatPercent(fraction)} · {categoryIndices.length} 部 ·{" "}
+        {inProgressCount} 部进行中
       </Text>
       <View style={[styles.categoryDetailBar, { backgroundColor: theme.dot }]}>
         <View
@@ -766,12 +785,65 @@ function CategoryProgressScreen({
             bookmarked={visibleBookmarks.some((bookmark) =>
               isWorkInGlobalSegment(bookmark.workId, segment),
             )}
+            selected={segment.id === selectedSegment?.id}
             label={segment.label}
-            onPress={() => onOpenSegment(segment)}
+            onPress={() => setSelectedSegmentId(segment.id)}
           />
         ))}
+        <View style={styles.categoryActions}>
+          {firstUnread ? (
+            <Button label="继续本类" theme={theme} filled onPress={() => onOpenSegment(firstUnread)} />
+          ) : null}
+        </View>
+        <View style={styles.segmentWorkPanel}>
+          <Text style={[styles.segmentWorkTitle, { color: theme.text }]}>
+            {selectedSegment
+              ? `${selectedSegment.label} · ${selectedItems.length} 部`
+              : "暂无经文"}
+          </Text>
+          {selectedItems.map((item) => (
+            <CategoryWorkRow
+              key={item.id}
+              item={item}
+              progress={globalProgress.workFractions[item.id] ?? 0}
+              theme={theme}
+              onOpen={() => onOpenWork(item)}
+            />
+          ))}
+        </View>
       </ScrollView>
     </View>
+  );
+}
+
+function CategoryWorkRow({
+  item,
+  progress,
+  theme,
+  onOpen,
+}: {
+  item: CbetaCatalogItem;
+  progress: number;
+  theme: Theme;
+  onOpen: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`打开 ${item.titleSimplified ?? item.title}`}
+      onPress={onOpen}
+      style={[styles.segmentWorkRow, { borderColor: theme.border }]}
+    >
+      <View style={styles.segmentWorkCopy}>
+        <Text style={[styles.segmentWorkName, { color: theme.text }]} numberOfLines={1}>
+          {item.titleSimplified ?? item.title}
+        </Text>
+        <Text style={[styles.segmentWorkMeta, { color: theme.muted }]} numberOfLines={1}>
+          {item.sourceId} · {item.volume}
+        </Text>
+      </View>
+      <WorkProgressBadge theme={theme} progress={progress} />
+    </Pressable>
   );
 }
 
@@ -1300,12 +1372,14 @@ function ProgressDot({
   theme,
   fraction,
   bookmarked,
+  selected = false,
   label,
   onPress,
 }: {
   theme: Theme;
   fraction: number;
   bookmarked: boolean;
+  selected?: boolean;
   label: string;
   onPress: () => void;
 }) {
@@ -1318,7 +1392,11 @@ function ProgressDot({
       onPress={onPress}
       style={[
         styles.dotHit,
-        bookmarked ? { borderColor: theme.accent, borderWidth: 1 } : null,
+        selected
+          ? { borderColor: theme.text, borderWidth: 2 }
+          : bookmarked
+            ? { borderColor: theme.accent, borderWidth: 1 }
+            : null,
       ]}
     >
       <View
@@ -2643,6 +2721,39 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingBottom: 26,
     rowGap: 5,
+  },
+  categoryActions: {
+    alignItems: "center",
+    marginTop: 16,
+    width: "100%",
+  },
+  segmentWorkPanel: {
+    marginTop: 18,
+    width: "100%",
+  },
+  segmentWorkTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  segmentWorkRow: {
+    alignItems: "center",
+    borderTopWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 58,
+    paddingVertical: 10,
+  },
+  segmentWorkCopy: {
+    flex: 1,
+  },
+  segmentWorkName: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  segmentWorkMeta: {
+    fontSize: 13,
+    marginTop: 4,
   },
   dotHit: {
     alignItems: "center",
