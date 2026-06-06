@@ -71,18 +71,14 @@ export const loadCbetaWork = async (item: CbetaCatalogItem): Promise<SutraWork> 
 
 const fetchCbetaXml = async (item: CbetaCatalogItem) => {
   const preferredSource = await AsyncStorage.getItem(preferredSourceKey);
-  const sources = orderedSourceTemplates(preferredSource);
+  const sourceBatches = sourceRaceBatches(preferredSource);
   let lastError: unknown;
 
-  for (const source of sources) {
-    const url = source.url.replace("{path}", item.path);
+  for (const sources of sourceBatches) {
     try {
-      const xml = await fetchTextWithTimeout(url, sourceTimeoutMs);
-      if (looksLikeCbetaXml(xml)) {
-        await AsyncStorage.setItem(preferredSourceKey, source.id);
-        return xml;
-      }
-      lastError = new Error("返回的内容不是有效的 CBETA XML");
+      const winner = await raceCbetaSources(item.path, sources);
+      await AsyncStorage.setItem(preferredSourceKey, winner.source.id);
+      return winner.xml;
     } catch (error) {
       lastError = error;
     }
@@ -95,21 +91,58 @@ const fetchCbetaXml = async (item: CbetaCatalogItem) => {
   );
 };
 
-const orderedSourceTemplates = (preferredSource: string | null) => {
+const sourceRaceBatches = (preferredSource: string | null) => {
   const preferred = cbetaSourceTemplates.find((source) => source.id === preferredSource);
-  if (!preferred) {
-    return cbetaSourceTemplates;
-  }
-
-  return [
-    preferred,
-    ...cbetaSourceTemplates.filter((source) => source.id !== preferred.id),
+  const fastSourceIds = new Set(["github", "jsdelivr", "staticdelivr"]);
+  const firstBatch = [
+    ...(preferred ? [preferred] : []),
+    ...cbetaSourceTemplates.filter(
+      (source) => fastSourceIds.has(source.id) && source.id !== preferred?.id,
+    ),
   ];
+  const secondBatch = cbetaSourceTemplates.filter(
+    (source) => !firstBatch.some((candidate) => candidate.id === source.id),
+  );
+
+  return [firstBatch, secondBatch].filter((batch) => batch.length > 0);
 };
 
-const fetchTextWithTimeout = async (url: string, timeoutMs: number) => {
+type CbetaSourceTemplate = (typeof cbetaSourceTemplates)[number];
+
+const raceCbetaSources = async (path: string, sources: CbetaSourceTemplate[]) => {
+  const controllers = sources.map(() => new AbortController());
+  try {
+    return await promiseAny(
+      sources.map(async (source, index) => {
+        const url = source.url.replace("{path}", path);
+        const xml = await fetchTextWithTimeout(
+          url,
+          sourceTimeoutMs,
+          controllers[index].signal,
+        );
+        if (!looksLikeCbetaXml(xml)) {
+          throw new Error("返回的内容不是有效的 CBETA XML");
+        }
+        return { source, xml };
+      }),
+    );
+  } finally {
+    controllers.forEach((controller) => controller.abort());
+  }
+};
+
+const fetchTextWithTimeout = async (
+  url: string,
+  timeoutMs: number,
+  signal: AbortSignal,
+) => {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  const timer = setTimeout(abort, timeoutMs);
+  if (signal.aborted) {
+    abort();
+  }
+  signal.addEventListener("abort", abort, { once: true });
   try {
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) {
@@ -118,8 +151,25 @@ const fetchTextWithTimeout = async (url: string, timeoutMs: number) => {
     return await response.text();
   } finally {
     clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
   }
 };
+
+const promiseAny = async <T,>(promises: Promise<T>[]) =>
+  new Promise<T>((resolve, reject) => {
+    const errors: unknown[] = [];
+    let rejectedCount = 0;
+
+    promises.forEach((promise, index) => {
+      promise.then(resolve).catch((error) => {
+        errors[index] = error;
+        rejectedCount += 1;
+        if (rejectedCount === promises.length) {
+          reject(errors.find((item) => item instanceof Error) ?? new Error("所有数据源都不可用"));
+        }
+      });
+    });
+  });
 
 const looksLikeCbetaXml = (text: string) =>
   text.includes("<TEI") || text.includes("<teiCorpus") || text.includes("<text");
