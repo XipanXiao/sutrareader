@@ -100,9 +100,11 @@ function SutraReaderApp() {
   );
   const [loadingMessage, setLoadingMessage] = useState<string>();
   const [readerOpenKey, setReaderOpenKey] = useState(0);
+  const [readerReturnScreen, setReaderReturnScreen] = useState<Screen>("home");
   const [chineseScript, setChineseScript] = useState<ChineseScript>("simplified");
   const [selectedCategory, setSelectedCategory] =
     useState<GlobalProgressCategoryGroup>();
+  const [selectedCategorySegmentId, setSelectedCategorySegmentId] = useState<string>();
 
   const workRanges = readerState.readRanges.filter(
     (range) => range.workId === currentWork.id,
@@ -155,12 +157,13 @@ function SutraReaderApp() {
     saveReaderState(normalized);
   };
 
-  const openReaderAt = async (position: ReadingPosition) => {
+  const openReaderAt = async (position: ReadingPosition, returnScreen: Screen = screen) => {
     setLoadingMessage(`正在打开《${workTitle(currentWork, chineseScript)}》`);
     await waitForLoadingPaint();
     setCurrentPosition(position);
     persist({ ...readerState, lastPosition: position });
     setReaderOpenKey((value) => value + 1);
+    setReaderReturnScreen(returnScreen === "reader" ? "home" : returnScreen);
     setScreen("reader");
     setTimeout(() => setLoadingMessage(undefined), 120);
   };
@@ -170,6 +173,7 @@ function SutraReaderApp() {
     destination: Screen = "home",
     stateOverride?: ReaderState,
     positionOverride?: ReadingPosition,
+    returnScreenOverride?: Screen,
   ) => {
     const baseState = stateOverride ?? readerState;
     setLoadingMessage(`正在载入《${catalogTitle(item, chineseScript)}》`);
@@ -185,6 +189,9 @@ function SutraReaderApp() {
       persist({ ...baseState, lastPosition: start });
       if (destination === "reader") {
         setReaderOpenKey((value) => value + 1);
+        setReaderReturnScreen(
+          returnScreenOverride ?? (screen === "reader" ? readerReturnScreen : screen),
+        );
       }
       setScreen(destination);
     } catch (error) {
@@ -202,7 +209,7 @@ function SutraReaderApp() {
       bookmark.position.workId === currentWork.id ||
       currentWork.blocks.some((block) => block.id === bookmark.position.textBlockId)
     ) {
-      openReaderAt(positionForBookmarkInWork(bookmark, currentWork));
+      openReaderAt(positionForBookmarkInWork(bookmark, currentWork), screen);
       return;
     }
 
@@ -221,6 +228,7 @@ function SutraReaderApp() {
       setCurrentPosition(position);
       persist({ ...readerState, lastPosition: position });
       setReaderOpenKey((value) => value + 1);
+      setReaderReturnScreen(screen === "reader" ? readerReturnScreen : screen);
       setScreen("reader");
     } catch (error) {
       setLoadingMessage(
@@ -414,6 +422,7 @@ function SutraReaderApp() {
           }
           onOpenCategory={(category) => {
             setSelectedCategory(category);
+            setSelectedCategorySegmentId(undefined);
             setScreen("category");
           }}
           onOpenBookmark={openBookmark}
@@ -428,9 +437,11 @@ function SutraReaderApp() {
         <CategoryProgressScreen
           theme={theme}
           category={selectedCategory}
+          selectedSegmentId={selectedCategorySegmentId}
           globalProgress={globalProgress}
           readerState={readerState}
           onBack={() => setScreen("home")}
+          onSelectSegment={setSelectedCategorySegmentId}
           onOpenSegment={(segment) =>
             readerState.completionAnchor &&
             isWorkInGlobalSegment(readerState.completionAnchor.workId, segment)
@@ -441,9 +452,12 @@ function SutraReaderApp() {
                   readerState.readRanges,
                   openCatalogItem,
                   setLoadingMessage,
+                  "category",
                 )
           }
-          onOpenWork={(item) => openCatalogItem(item, "reader")}
+          onOpenWork={(item) => {
+            openCatalogItem(item, "reader", undefined, undefined, "category");
+          }}
         />
       ) : null}
       {screen === "library" ? (
@@ -473,7 +487,7 @@ function SutraReaderApp() {
           position={currentPosition}
           progress={progress}
           restoreKey={readerOpenKey}
-          onBack={() => setScreen("home")}
+          onBack={() => setScreen(readerReturnScreen)}
           onPositionChange={(position) => {
             setCurrentPosition(position);
             setReaderState((state) => {
@@ -718,17 +732,21 @@ function CategoryProgressCard({
 function CategoryProgressScreen({
   theme,
   category,
+  selectedSegmentId,
   globalProgress,
   readerState,
   onBack,
+  onSelectSegment,
   onOpenSegment,
   onOpenWork,
 }: {
   theme: Theme;
   category: GlobalProgressCategoryGroup;
+  selectedSegmentId?: string;
   globalProgress: ReturnType<typeof calculateGlobalProgress>;
   readerState: ReaderState;
   onBack: () => void;
+  onSelectSegment: (segmentId: string) => void;
   onOpenSegment: (segment: GlobalProgressSegment) => void;
   onOpenWork: (item: CbetaCatalogItem) => void;
 }) {
@@ -736,10 +754,11 @@ function CategoryProgressScreen({
   const firstUnread =
     segments.find((segment) => globalSegmentFraction(segment, globalProgress.workFractions) < completedThreshold) ??
     segments[0];
-  const [selectedSegmentId, setSelectedSegmentId] = useState(firstUnread?.id);
   useEffect(() => {
-    setSelectedSegmentId(firstUnread?.id);
-  }, [category.id, firstUnread?.id]);
+    if (!selectedSegmentId && firstUnread) {
+      onSelectSegment(firstUnread.id);
+    }
+  }, [firstUnread, onSelectSegment, selectedSegmentId]);
   const selectedSegment =
     segments.find((segment) => segment.id === selectedSegmentId) ?? firstUnread;
   const selectedItems = selectedSegment ? catalogItemsForSegment(selectedSegment) : [];
@@ -787,7 +806,7 @@ function CategoryProgressScreen({
             )}
             selected={segment.id === selectedSegment?.id}
             label={segment.label}
-            onPress={() => setSelectedSegmentId(segment.id)}
+            onPress={() => onSelectSegment(segment.id)}
           />
         ))}
         <View style={styles.categoryActions}>
@@ -2276,8 +2295,10 @@ function openGlobalSegment(
     destination?: Screen,
     stateOverride?: ReaderState,
     positionOverride?: ReadingPosition,
+    returnScreenOverride?: Screen,
   ) => void,
   setLoadingMessage?: (message: string | undefined) => void,
+  returnScreenOverride?: Screen,
 ) {
   const items = catalogItemsForSegment(segment);
   const target =
@@ -2294,6 +2315,7 @@ function openGlobalSegment(
           work,
           readRanges.filter((range) => range.workId === work.id),
         ),
+        returnScreenOverride,
       );
     });
   }
