@@ -239,6 +239,41 @@ function SutraReaderApp() {
     setTimeout(() => setLoadingMessage(undefined), 120);
   };
 
+  const openPosition = async (position: ReadingPosition) => {
+    if (
+      position.workId === currentWork.id ||
+      currentWork.blocks.some((block) => block.id === position.textBlockId)
+    ) {
+      openReaderAt(positionForSavedPositionInWork(position, currentWork), "home");
+      return;
+    }
+
+    const item = catalogItemForPosition(position);
+    if (!item) {
+      openReaderAt(currentPosition, "home");
+      return;
+    }
+
+    setLoadingMessage(`正在载入《${catalogTitle(item, chineseScript)}》`);
+    try {
+      await waitForLoadingPaint();
+      const work = await loadCbetaWork(item);
+      const nextPosition = positionForSavedPositionInWork(position, work);
+      setCurrentWork(work);
+      setCurrentPosition(nextPosition);
+      persist({ ...readerState, lastPosition: nextPosition });
+      setReaderOpenKey((value) => value + 1);
+      setReaderReturnScreen("home");
+      setScreen("reader");
+    } catch (error) {
+      setLoadingMessage(
+        error instanceof Error ? error.message : "无法载入上次阅读的经文",
+      );
+      return;
+    }
+    setTimeout(() => setLoadingMessage(undefined), 120);
+  };
+
   const deleteBookmark = (bookmark: Bookmark) => {
     if (readerState.completionAnchor?.id === bookmark.id) {
       persist({
@@ -416,9 +451,11 @@ function SutraReaderApp() {
           onOpenLibrary={() => setScreen("library")}
           onOpenOutline={() => setScreen("outline")}
           onContinue={() =>
-            latestBookmark
-              ? openBookmark(latestBookmark)
-              : openReaderAt(readerState.lastPosition ?? currentPosition)
+            readerState.lastPosition
+              ? openPosition(readerState.lastPosition)
+              : latestBookmark
+                ? openBookmark(latestBookmark)
+                : openReaderAt(currentPosition, "home")
           }
           onOpenCategory={(category) => {
             setSelectedCategory(category);
@@ -576,6 +613,11 @@ function HomeScreen({
     ? [readerState.completionAnchor, ...activeBookmarks]
     : activeBookmarks;
   const progressGroups = groupGlobalProgressSegments(globalSegments);
+  const currentCatalogIndex = catalogIndexForWork(currentWork);
+  const currentCategoryId =
+    currentCatalogIndex === undefined
+      ? undefined
+      : categoryForCatalogItem(cbetaCatalog[currentCatalogIndex]).id;
 
   return (
     <ScrollView
@@ -608,9 +650,7 @@ function HomeScreen({
             theme={theme}
             category={group}
             fraction={categoryProgressFraction(group, globalProgress.workFractions)}
-            bookmarked={visibleBookmarks.some((bookmark) =>
-              isWorkInCategory(bookmark.workId, group.categoryId),
-            )}
+            current={group.categoryId === currentCategoryId}
             onPress={() => onOpenCategory(group)}
           />
         ))}
@@ -687,13 +727,13 @@ function CategoryProgressCard({
   theme,
   category,
   fraction,
-  bookmarked,
+  current,
   onPress,
 }: {
   theme: Theme;
   category: GlobalProgressCategoryGroup;
   fraction: number;
-  bookmarked: boolean;
+  current: boolean;
   onPress: () => void;
 }) {
   const complete = fraction >= completedThreshold;
@@ -706,8 +746,9 @@ function CategoryProgressCard({
         styles.categoryCard,
         {
           backgroundColor: theme.input,
-          borderColor: bookmarked ? theme.accent : theme.border,
+          borderColor: current ? theme.accent : theme.border,
         },
+        current ? styles.categoryCardCurrent : null,
       ]}
     >
       <View
@@ -1990,11 +2031,6 @@ function categoryWorkIndices(categoryId: string) {
     .map(({ index }) => index);
 }
 
-function isWorkInCategory(workId: string, categoryId: string) {
-  const index = catalogIndexById.get(workId);
-  return index !== undefined && categoryForCatalogItem(cbetaCatalog[index]).id === categoryId;
-}
-
 function categoryProgressFraction(
   category: GlobalProgressCategoryGroup,
   workFractions: Record<string, number>,
@@ -2268,20 +2304,36 @@ function catalogItemForBookmark(bookmark: Bookmark) {
   });
 }
 
+function catalogItemForPosition(position: ReadingPosition) {
+  return (
+    cbetaCatalog.find((item) => item.id === position.workId) ??
+    cbetaCatalog.find((item) =>
+      normalizeSearchText(position.anchorId).includes(normalizeSearchText(item.sourceId)),
+    )
+  );
+}
+
 function positionForBookmarkInWork(bookmark: Bookmark, work: SutraWork): ReadingPosition {
-  const block = work.blocks.find((item) => item.id === bookmark.position.textBlockId);
+  return positionForSavedPositionInWork(bookmark.position, work);
+}
+
+function positionForSavedPositionInWork(
+  position: ReadingPosition,
+  work: SutraWork,
+): ReadingPosition {
+  const block = work.blocks.find((item) => item.id === position.textBlockId);
   if (!block) {
     return offsetToPosition(work, 0);
   }
 
   return {
-    ...bookmark.position,
+    ...position,
     workId: work.id,
     textBlockId: block.id,
     anchorId: block.anchorId,
     charOffset: Math.max(
       0,
-      Math.min(bookmark.position.charOffset, block.textSimplified.length),
+      Math.min(position.charOffset, block.textSimplified.length),
     ),
   };
 }
@@ -2697,6 +2749,9 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     paddingHorizontal: 8,
     position: "relative",
+  },
+  categoryCardCurrent: {
+    borderWidth: 2,
   },
   categoryCardFill: {
     bottom: 0,
