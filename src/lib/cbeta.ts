@@ -1,9 +1,34 @@
 import * as FileSystem from "expo-file-system/legacy";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Converter } from "opencc-js";
 import { CbetaCatalogItem, SutraSection, SutraWork, TextBlock } from "../types";
 
 const cacheDirectory = `${FileSystem.documentDirectory ?? ""}cbeta-cache`;
 const toSimplified = Converter({ from: "tw", to: "cn" });
+const preferredSourceKey = "sutrareader.cbetaPreferredSource.v1";
+const sourceTimeoutMs = 8000;
+const cbetaSourceTemplates = [
+  {
+    id: "github",
+    url: "https://raw.githubusercontent.com/cbeta-org/xml-p5/master/{path}",
+  },
+  {
+    id: "jsdelivr",
+    url: "https://cdn.jsdelivr.net/gh/cbeta-org/xml-p5@master/{path}",
+  },
+  {
+    id: "staticdelivr",
+    url: "https://cdn.staticdelivr.com/gh/cbeta-org/xml-p5/master/{path}",
+  },
+  {
+    id: "githubraw",
+    url: "https://cdn.githubraw.com/cbeta-org/xml-p5/master/{path}",
+  },
+  {
+    id: "gh-proxy",
+    url: "https://gh-proxy.com/https://raw.githubusercontent.com/cbeta-org/xml-p5/master/{path}",
+  },
+] as const;
 
 const ensureCacheDirectory = async () => {
   const info = await FileSystem.getInfoAsync(cacheDirectory);
@@ -38,16 +63,66 @@ export const loadCbetaWork = async (item: CbetaCatalogItem): Promise<SutraWork> 
     }
   }
 
-  const response = await fetch(item.rawUrl);
-  if (!response.ok) {
-    throw new Error(`无法从 CBETA 下载 ${item.sourceId}`);
-  }
-
-  const xml = await response.text();
+  const xml = await fetchCbetaXml(item);
   const work = parseCbetaXml(item, xml);
   await FileSystem.writeAsStringAsync(cachePath, JSON.stringify(work));
   return work;
 };
+
+const fetchCbetaXml = async (item: CbetaCatalogItem) => {
+  const preferredSource = await AsyncStorage.getItem(preferredSourceKey);
+  const sources = orderedSourceTemplates(preferredSource);
+  let lastError: unknown;
+
+  for (const source of sources) {
+    const url = source.url.replace("{path}", item.path);
+    try {
+      const xml = await fetchTextWithTimeout(url, sourceTimeoutMs);
+      if (looksLikeCbetaXml(xml)) {
+        await AsyncStorage.setItem(preferredSourceKey, source.id);
+        return xml;
+      }
+      lastError = new Error("返回的内容不是有效的 CBETA XML");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error(
+    lastError instanceof Error
+      ? `无法从 CBETA 下载 ${item.sourceId}：${lastError.message}`
+      : `无法从 CBETA 下载 ${item.sourceId}`,
+  );
+};
+
+const orderedSourceTemplates = (preferredSource: string | null) => {
+  const preferred = cbetaSourceTemplates.find((source) => source.id === preferredSource);
+  if (!preferred) {
+    return cbetaSourceTemplates;
+  }
+
+  return [
+    preferred,
+    ...cbetaSourceTemplates.filter((source) => source.id !== preferred.id),
+  ];
+};
+
+const fetchTextWithTimeout = async (url: string, timeoutMs: number) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return await response.text();
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const looksLikeCbetaXml = (text: string) =>
+  text.includes("<TEI") || text.includes("<teiCorpus") || text.includes("<text");
 
 const shouldRefreshCachedWork = (work: SutraWork) => {
   if (!work.blocks.length) {
