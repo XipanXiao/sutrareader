@@ -1263,7 +1263,11 @@ function ReaderScreen({
   const onPositionChangeRef = useRef(onPositionChange);
   const readerItemsRef = useRef(readerItems);
   const lastReportedItemRef = useRef("");
+  const webViewRef = useRef<WebView>(null);
   const [readerSource, setReaderSource] = useState<{ uri: string; key: string }>();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchStatus, setSearchStatus] = useState("");
 
   useEffect(() => {
     workRef.current = work;
@@ -1331,10 +1335,11 @@ function ReaderScreen({
   const handleReaderMessage = (event: WebViewMessageEvent) => {
     let message:
       | {
-          type: "position" | "select" | "next";
+          type: "position" | "select" | "next" | "searchResult";
           itemId?: string;
           charOffset?: number;
           scrollFraction?: number;
+          found?: boolean;
         }
       | undefined;
 
@@ -1350,6 +1355,11 @@ function ReaderScreen({
 
     if (message.type === "next") {
       onOpenNextWork();
+      return;
+    }
+
+    if (message.type === "searchResult") {
+      setSearchStatus(message.found ? "已定位" : "未找到");
       return;
     }
 
@@ -1375,6 +1385,38 @@ function ReaderScreen({
     );
   };
 
+  const runReaderSearch = () => {
+    const query = searchQuery.trim();
+    if (!query) {
+      setSearchStatus("");
+      return;
+    }
+
+    setSearchStatus("查找中");
+    webViewRef.current?.injectJavaScript(
+      `window.__sutraSearch && window.__sutraSearch(${JSON.stringify(query)}); true;`,
+    );
+  };
+
+  const readerRightAction = (
+    <View style={styles.readerTopActions}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="查找经文"
+        onPress={() => {
+          setSearchOpen((value) => !value);
+          setSearchStatus("");
+        }}
+        style={styles.iconButton}
+      >
+        <SearchGlyph color={theme.accent} />
+      </Pressable>
+      <Pressable onPress={onMarkHere} style={styles.topActionButton}>
+        <Text style={[styles.topActionText, { color: theme.accent }]}>记到此处</Text>
+      </Pressable>
+    </View>
+  );
+
   if (!readerSource) {
     return (
       <View style={styles.screen}>
@@ -1382,12 +1424,17 @@ function ReaderScreen({
           theme={theme}
           title={workTitle(work, chineseScript)}
           onBack={onBack}
-          rightAction={
-            <Pressable onPress={onMarkHere} style={styles.topActionButton}>
-              <Text style={[styles.topActionText, { color: theme.accent }]}>记到此处</Text>
-            </Pressable>
-          }
+          rightAction={readerRightAction}
         />
+        {searchOpen ? (
+          <ReaderSearchBar
+            theme={theme}
+            query={searchQuery}
+            status={searchStatus}
+            onChangeQuery={setSearchQuery}
+            onSubmit={runReaderSearch}
+          />
+        ) : null}
         <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={2}>
           {displayText(work.subtitle, chineseScript)}
         </Text>
@@ -1409,12 +1456,17 @@ function ReaderScreen({
         theme={theme}
         title={workTitle(work, chineseScript)}
         onBack={onBack}
-        rightAction={
-          <Pressable onPress={onMarkHere} style={styles.topActionButton}>
-            <Text style={[styles.topActionText, { color: theme.accent }]}>记到此处</Text>
-          </Pressable>
-        }
+        rightAction={readerRightAction}
       />
+      {searchOpen ? (
+        <ReaderSearchBar
+          theme={theme}
+          query={searchQuery}
+          status={searchStatus}
+          onChangeQuery={setSearchQuery}
+          onSubmit={runReaderSearch}
+        />
+      ) : null}
       <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={2}>
         {displayText(work.subtitle, chineseScript)}
       </Text>
@@ -1424,6 +1476,7 @@ function ReaderScreen({
       </View>
 
       <WebView
+        ref={webViewRef}
         key={readerSource.key}
         originWhitelist={["*"]}
         source={{ uri: readerSource.uri }}
@@ -1606,6 +1659,10 @@ function createReaderHtml({
   .reader-anchor {
     scroll-margin-top: 14px;
   }
+  .search-hit {
+    background: ${theme.selection};
+    border-radius: 4px;
+  }
   .end-panel {
     margin: 20px 0 0;
     padding: 20px 0 30px;
@@ -1667,6 +1724,48 @@ ${endPanel}
       charOffset: Math.floor(start + (end - start) * ratio),
       scrollFraction: scrollFraction()
     };
+  };
+  const clearSearchHit = () => {
+    document.querySelectorAll(".search-hit").forEach((node) => {
+      node.classList.remove("search-hit");
+    });
+  };
+  window.__sutraSearch = (query) => {
+    const term = String(query || "").trim();
+    clearSearchHit();
+
+    if (!term) {
+      post({ type: "searchResult", found: false });
+      return;
+    }
+
+    const blocks = Array.from(document.querySelectorAll(".reader-block"));
+    for (const block of blocks) {
+      const text = block.querySelector("p")?.textContent || "";
+      const index = text.indexOf(term);
+      if (index < 0) {
+        continue;
+      }
+
+      const anchorOffset = Math.floor(index / ${readerAnchorStep}) * ${readerAnchorStep};
+      const anchorId = block.dataset.itemId + "-c" + anchorOffset;
+      const anchor = document.getElementById(anchorId) || block;
+      selectBlock(block);
+      anchor.classList.add("search-hit");
+      anchor.scrollIntoView({ block: "start", inline: "nearest" });
+      window.setTimeout(() => {
+        post({
+          type: "select",
+          itemId: block.dataset.itemId,
+          charOffset: Number(block.dataset.charStart || 0) + index,
+          scrollFraction: scrollFraction()
+        });
+        post({ type: "searchResult", found: true });
+      }, 80);
+      return;
+    }
+
+    post({ type: "searchResult", found: false });
   };
   document.addEventListener("click", (event) => {
     const nextButton = event.target.closest("#next-work");
@@ -1841,6 +1940,59 @@ function CompactButton({
         {text}
       </Text>
     </Pressable>
+  );
+}
+
+function ReaderSearchBar({
+  theme,
+  query,
+  status,
+  onChangeQuery,
+  onSubmit,
+}: {
+  theme: Theme;
+  query: string;
+  status: string;
+  onChangeQuery: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <View style={styles.readerSearchRow}>
+      <TextInput
+        value={query}
+        onChangeText={onChangeQuery}
+        onSubmitEditing={onSubmit}
+        returnKeyType="search"
+        autoCapitalize="none"
+        autoCorrect={false}
+        placeholder="查找经文"
+        placeholderTextColor={theme.muted}
+        style={[
+          styles.readerSearchInput,
+          { borderColor: theme.border, color: theme.text },
+        ]}
+      />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="查找"
+        onPress={onSubmit}
+        style={[styles.readerSearchButton, { backgroundColor: theme.accent }]}
+      >
+        <Text style={[styles.readerSearchButtonText, { color: theme.onAccent }]}>查找</Text>
+      </Pressable>
+      {status ? (
+        <Text style={[styles.readerSearchStatus, { color: theme.muted }]}>{status}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function SearchGlyph({ color }: { color: string }) {
+  return (
+    <View style={styles.searchGlyphBox}>
+      <View style={[styles.searchGlyphCircle, { borderColor: color }]} />
+      <View style={[styles.searchGlyphHandle, { backgroundColor: color }]} />
+    </View>
   );
 }
 
@@ -2934,7 +3086,41 @@ const styles = StyleSheet.create({
   },
   topRightSlot: {
     alignItems: "flex-end",
-    minWidth: 68,
+    minWidth: 92,
+  },
+  readerTopActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  iconButton: {
+    alignItems: "center",
+    height: 34,
+    justifyContent: "center",
+    width: 34,
+  },
+  searchGlyphBox: {
+    height: 22,
+    position: "relative",
+    width: 22,
+  },
+  searchGlyphCircle: {
+    borderRadius: 7,
+    borderWidth: 2,
+    height: 14,
+    left: 2,
+    position: "absolute",
+    top: 2,
+    width: 14,
+  },
+  searchGlyphHandle: {
+    borderRadius: 1,
+    height: 9,
+    left: 15,
+    position: "absolute",
+    top: 14,
+    transform: [{ rotate: "-45deg" }],
+    width: 2,
   },
   topActionButton: {
     alignItems: "flex-end",
@@ -3014,6 +3200,35 @@ const styles = StyleSheet.create({
   workProgressText: {
     fontSize: 12,
     fontWeight: "700",
+  },
+  readerSearchRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 10,
+  },
+  readerSearchInput: {
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    fontSize: 16,
+    minHeight: 40,
+    paddingHorizontal: 10,
+  },
+  readerSearchButton: {
+    alignItems: "center",
+    borderRadius: 8,
+    justifyContent: "center",
+    minHeight: 40,
+    paddingHorizontal: 12,
+  },
+  readerSearchButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  readerSearchStatus: {
+    fontSize: 12,
+    minWidth: 42,
   },
   readerSubhead: {
     fontSize: 14,

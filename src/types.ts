@@ -21,6 +21,7 @@ export type SutraWork = {
   id: string;
   title: string;
   subtitle: string;
+  parserVersion?: number;
   sourcePath?: string;
   sourceUrl?: string;
   sourceAttribution?: string;

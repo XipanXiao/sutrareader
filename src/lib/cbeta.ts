@@ -4,9 +4,17 @@ import { Converter } from "opencc-js";
 import { CbetaCatalogItem, SutraSection, SutraWork, TextBlock } from "../types";
 
 const cacheDirectory = `${FileSystem.documentDirectory ?? ""}cbeta-cache`;
-const toSimplified = Converter({ from: "tw", to: "cn" });
+const convertToSimplified = Converter({ from: "tw", to: "cn" });
+const toSimplified = (text: string) =>
+  convertToSimplified(text)
+    .replace(/𫓴/g, "矛")
+    .replace(/𫄧/g, "线")
+    .replace(/𣽈/g, "濡")
+    .replace(/𭶑/g, "黠")
+    .replace(/𤦲/g, "璩");
 const preferredSourceKey = "sutrareader.cbetaPreferredSource.v1";
 const sourceTimeoutMs = 8000;
+const cbetaParserVersion = 3;
 const cbetaSourceTemplates = [
   {
     id: "github",
@@ -179,8 +187,16 @@ const shouldRefreshCachedWork = (work: SutraWork) => {
     return true;
   }
 
+  if (work.parserVersion !== cbetaParserVersion) {
+    return true;
+  }
+
   const hasUnresolvedGaiji = work.blocks.some(
-    (block) => block.textSimplified.includes("□") || block.textSource.includes("□"),
+    (block) =>
+      block.textSimplified.includes("□") ||
+      block.textSource.includes("□") ||
+      block.textSimplified.includes("�") ||
+      block.textSource.includes("�"),
   );
   if (hasUnresolvedGaiji) {
     return true;
@@ -224,9 +240,12 @@ const stripTags = (xml: string, gaijiMap = new Map<string, string>()) =>
       .replace(/<note[\s\S]*?<\/note>/g, "")
       .replace(/<app[\s\S]*?<\/app>/g, "")
       .replace(/<choice[\s\S]*?<reg[^>]*>([\s\S]*?)<\/reg>[\s\S]*?<\/choice>/g, "$1")
-      .replace(/<g\b[^>]*>([\s\S]*?)<\/g>/g, "$1")
+      .replace(/<g\b([^>]*)>([\s\S]*?)<\/g>/g, (_match, attrs: string, content: string) => {
+        const ref = gaijiRef(attrs);
+        return ref ? gaijiMap.get(ref) ?? content : content;
+      })
       .replace(/<g\b([^>]*)\/>/g, (_match, attrs: string) => {
-        const ref = attrs.match(/ref="?#([^"\s/>]+)/)?.[1];
+        const ref = gaijiRef(attrs);
         return ref ? gaijiMap.get(ref) ?? "" : "";
       })
       .replace(/<[^>]+>/g, "")
@@ -234,6 +253,8 @@ const stripTags = (xml: string, gaijiMap = new Map<string, string>()) =>
       .replace(/\s+/g, " ")
       .trim(),
   );
+
+const gaijiRef = (attrs: string) => attrs.match(/ref="?#([^"\s/>]+)/)?.[1];
 
 const extractGaijiMap = (xml: string) => {
   const map = new Map<string, string>();
@@ -243,8 +264,8 @@ const extractGaijiMap = (xml: string) => {
   while ((match = charPattern.exec(xml))) {
     const [, id, body] = match;
     const value =
+      normalizedFormMapping(body) ??
       unicodeMapping(body) ??
-      firstTagText(body, "charProp") ??
       firstTagText(body, "charName") ??
       firstTagText(body, "mapping");
     if (value) {
@@ -253,6 +274,23 @@ const extractGaijiMap = (xml: string) => {
   }
 
   return map;
+};
+
+const normalizedFormMapping = (xml: string) => {
+  const charPropPattern = /<charProp\b[^>]*>([\s\S]*?)<\/charProp>/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = charPropPattern.exec(xml))) {
+    const body = match[1];
+    const localName = firstTagText(body, "localName");
+    if (localName !== "normalized form") {
+      continue;
+    }
+
+    return firstTagText(body, "value");
+  }
+
+  return undefined;
 };
 
 const unicodeMapping = (xml: string) => {
@@ -278,9 +316,9 @@ const firstTagText = (xml: string, tag: string) => {
 
 const normalizeChineseText = (text: string) =>
   text
-    .replace(/(?<=[\u3400-\u9fff])\s+(?=[\u3400-\u9fff])/g, "")
-    .replace(/(?<=[\u3400-\u9fff])\s+(?=[，。！？；：、」』》）】])/g, "")
-    .replace(/(?<=[「『《（【])\s+(?=[\u3400-\u9fff])/g, "")
+    .replace(/(?<=\p{Script=Han})\s+(?=\p{Script=Han})/gu, "")
+    .replace(/(?<=\p{Script=Han})\s+(?=[，。！？；：、」』》）】])/gu, "")
+    .replace(/(?<=[「『《（【])\s+(?=\p{Script=Han})/gu, "")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -421,6 +459,7 @@ export const parseCbetaXml = (item: CbetaCatalogItem, xml: string): SutraWork =>
     subtitle: [item.canonTitle, item.sourceId, toSimplified(author), extent]
       .filter(Boolean)
       .join(" - "),
+    parserVersion: cbetaParserVersion,
     sourcePath: item.path,
     sourceUrl: item.rawUrl,
     sourceAttribution:
