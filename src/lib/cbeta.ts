@@ -179,6 +179,13 @@ const shouldRefreshCachedWork = (work: SutraWork) => {
     return true;
   }
 
+  const hasUnresolvedGaiji = work.blocks.some(
+    (block) => block.textSimplified.includes("□") || block.textSource.includes("□"),
+  );
+  if (hasUnresolvedGaiji) {
+    return true;
+  }
+
   const shortBlocks = work.blocks.filter((block) => block.textSimplified.length < 28).length;
   return work.blocks.length > 80 && shortBlocks / work.blocks.length > 0.35;
 };
@@ -211,19 +218,63 @@ const decodeXml = (text: string) =>
     .replace(/&quot;/g, "\"")
     .replace(/&apos;/g, "'");
 
-const stripTags = (xml: string) =>
+const stripTags = (xml: string, gaijiMap = new Map<string, string>()) =>
   decodeXml(
     xml
       .replace(/<note[\s\S]*?<\/note>/g, "")
       .replace(/<app[\s\S]*?<\/app>/g, "")
       .replace(/<choice[\s\S]*?<reg[^>]*>([\s\S]*?)<\/reg>[\s\S]*?<\/choice>/g, "$1")
       .replace(/<g\b[^>]*>([\s\S]*?)<\/g>/g, "$1")
-      .replace(/<g\b[^/]*\/>/g, "□")
+      .replace(/<g\b([^>]*)\/>/g, (_match, attrs: string) => {
+        const ref = attrs.match(/ref="?#([^"\s/>]+)/)?.[1];
+        return ref ? gaijiMap.get(ref) ?? "" : "";
+      })
       .replace(/<[^>]+>/g, "")
       .replace(/\[[A-Z]+\d+[a-z]?\]/g, "")
       .replace(/\s+/g, " ")
       .trim(),
   );
+
+const extractGaijiMap = (xml: string) => {
+  const map = new Map<string, string>();
+  const charPattern = /<char\b[^>]*(?:xml:)?id="([^"]+)"[^>]*>([\s\S]*?)<\/char>/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = charPattern.exec(xml))) {
+    const [, id, body] = match;
+    const value =
+      unicodeMapping(body) ??
+      firstTagText(body, "charProp") ??
+      firstTagText(body, "charName") ??
+      firstTagText(body, "mapping");
+    if (value) {
+      map.set(id, value);
+    }
+  }
+
+  return map;
+};
+
+const unicodeMapping = (xml: string) => {
+  const unicode = xml.match(
+    /<mapping\b(?=[^>]*type="(?:normal_unicode|unicode)")[^>]*>\s*U\+([0-9A-Fa-f]+)\s*<\/mapping>/,
+  )?.[1];
+  if (!unicode) {
+    return undefined;
+  }
+
+  const codePoint = Number.parseInt(unicode, 16);
+  if (!Number.isFinite(codePoint)) {
+    return undefined;
+  }
+
+  return String.fromCodePoint(codePoint);
+};
+
+const firstTagText = (xml: string, tag: string) => {
+  const match = xml.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`));
+  return match?.[1] ? stripTags(match[1]) : undefined;
+};
 
 const normalizeChineseText = (text: string) =>
   text
@@ -233,32 +284,43 @@ const normalizeChineseText = (text: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-const firstMatch = (xml: string, patterns: RegExp[]) => {
+const firstMatch = (xml: string, patterns: RegExp[], gaijiMap = new Map<string, string>()) => {
   for (const pattern of patterns) {
     const match = xml.match(pattern);
     if (match?.[1]) {
-      return stripTags(match[1]);
+      return stripTags(match[1], gaijiMap);
     }
   }
   return "";
 };
 
-const extractTitle = (item: CbetaCatalogItem, xml: string) =>
-  firstMatch(xml, [
-    /<title\b(?=[^>]*level="m")(?=[^>]*xml:lang="zh-Hant")[^>]*>([\s\S]*?)<\/title>/,
-    /<title\b(?=[^>]*xml:lang="zh-Hant")[^>]*>([\s\S]*?)<\/title>/,
-  ]) || item.title;
+const extractTitle = (item: CbetaCatalogItem, xml: string, gaijiMap: Map<string, string>) =>
+  firstMatch(
+    xml,
+    [
+      /<title\b(?=[^>]*level="m")(?=[^>]*xml:lang="zh-Hant")[^>]*>([\s\S]*?)<\/title>/,
+      /<title\b(?=[^>]*xml:lang="zh-Hant")[^>]*>([\s\S]*?)<\/title>/,
+    ],
+    gaijiMap,
+  ) || item.title;
 
-const extractAuthor = (xml: string) => firstMatch(xml, [/<author[^>]*>([\s\S]*?)<\/author>/]);
+const extractAuthor = (xml: string, gaijiMap: Map<string, string>) =>
+  firstMatch(xml, [/<author[^>]*>([\s\S]*?)<\/author>/], gaijiMap);
 
-const extractExtent = (xml: string) => firstMatch(xml, [/<extent[^>]*>([\s\S]*?)<\/extent>/]);
+const extractExtent = (xml: string, gaijiMap: Map<string, string>) =>
+  firstMatch(xml, [/<extent[^>]*>([\s\S]*?)<\/extent>/], gaijiMap);
 
 const extractBodyXml = (xml: string) => {
   const match = xml.match(/<text[\s\S]*?>([\s\S]*?)<\/text>/);
   return match?.[1] ?? xml;
 };
 
-const splitIntoBlocks = (item: CbetaCatalogItem, title: string, bodyXml: string) => {
+const splitIntoBlocks = (
+  item: CbetaCatalogItem,
+  title: string,
+  bodyXml: string,
+  gaijiMap: Map<string, string>,
+) => {
   const sections: SutraSection[] = [];
   const blocks: TextBlock[] = [];
   let currentSection: SutraSection | undefined;
@@ -280,7 +342,7 @@ const splitIntoBlocks = (item: CbetaCatalogItem, title: string, bodyXml: string)
   };
 
   const flushBlock = () => {
-    const source = normalizeChineseText(stripTags(buffer.join("")));
+    const source = normalizeChineseText(stripTags(buffer.join(""), gaijiMap));
     buffer = [];
 
     if (!source || source.length < 2) {
@@ -313,7 +375,7 @@ const splitIntoBlocks = (item: CbetaCatalogItem, title: string, bodyXml: string)
     order += 1;
   };
 
-  const tokenPattern = /<head\b[^>]*>[\s\S]*?<\/head>|<p\b[^>]*>|<\/p>|<milestone\b[^>]*unit="juan"[^>]*\/>/g;
+  const tokenPattern = /<head\b[^>]*>[\s\S]*?<\/head>|<p\b[^>]*>|<\/(?:p|lg|l|item|trailer)>|<milestone\b[^>]*unit="juan"[^>]*\/>/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -322,8 +384,8 @@ const splitIntoBlocks = (item: CbetaCatalogItem, title: string, bodyXml: string)
     const token = match[0];
 
     if (token.startsWith("<head")) {
-      beginSection(stripTags(token));
-    } else if (token === "</p>") {
+      beginSection(stripTags(token, gaijiMap));
+    } else if (token.startsWith("</")) {
       flushBlock();
     }
 
@@ -346,11 +408,12 @@ const splitIntoBlocks = (item: CbetaCatalogItem, title: string, bodyXml: string)
 };
 
 export const parseCbetaXml = (item: CbetaCatalogItem, xml: string): SutraWork => {
-  const title = extractTitle(item, xml);
-  const author = extractAuthor(xml);
-  const extent = extractExtent(xml);
+  const gaijiMap = extractGaijiMap(xml);
+  const title = extractTitle(item, xml, gaijiMap);
+  const author = extractAuthor(xml, gaijiMap);
+  const extent = extractExtent(xml, gaijiMap);
   const bodyXml = extractBodyXml(xml);
-  const { sections, blocks } = splitIntoBlocks(item, title, bodyXml);
+  const { sections, blocks } = splitIntoBlocks(item, title, bodyXml, gaijiMap);
 
   return {
     id: item.id,

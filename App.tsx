@@ -704,6 +704,7 @@ function HomeScreen({
               bookmark={bookmark}
               theme={theme}
               chineseScript={chineseScript}
+              progress={globalProgress.workFractions[bookmark.workId] ?? 0}
               onOpen={onOpenBookmark}
               onDelete={onDeleteBookmark}
             />
@@ -911,12 +912,14 @@ function BookmarkRow({
   bookmark,
   theme,
   chineseScript,
+  progress,
   onOpen,
   onDelete,
 }: {
   bookmark: Bookmark;
   theme: Theme;
   chineseScript: ChineseScript;
+  progress: number;
   onOpen: (bookmark: Bookmark) => void;
   onDelete: (bookmark: Bookmark) => void;
 }) {
@@ -1032,10 +1035,16 @@ function BookmarkRow({
           }}
           style={styles.bookmarkOpenTarget}
         >
-          <Text style={[styles.bookmark, { color: theme.muted }]} numberOfLines={2}>
-            {bookmarkTitle}
-          </Text>
-          <Text style={[styles.bookmarkAction, { color: theme.accent }]}>打开</Text>
+          <View style={styles.bookmarkDetails}>
+            <Text style={[styles.bookmark, { color: theme.muted }]} numberOfLines={2}>
+              {bookmarkTitle}
+            </Text>
+            <MiniBar theme={theme} fraction={progress} compact />
+          </View>
+          <View style={styles.bookmarkMeta}>
+            <WorkProgressBadge theme={theme} progress={progress} />
+            <Text style={[styles.bookmarkAction, { color: theme.accent }]}>打开</Text>
+          </View>
         </Pressable>
       </Animated.View>
     </View>
@@ -1474,27 +1483,17 @@ function ProgressDot({
 }
 
 function createReaderTextItems(work: SutraWork, chineseScript: ChineseScript): ReaderTextItem[] {
-  return work.blocks.flatMap((block) => {
-    const sourceText =
-      chineseScript === "traditional" ? block.textSource : block.textSimplified;
-    const chunks = splitReaderText(sourceText);
-    let charStart = 0;
+  return work.blocks.map((block) => {
+    const text = chineseScript === "traditional" ? block.textSource : block.textSimplified;
 
-    return chunks.map((text, index) => {
-      const item: ReaderTextItem = {
-        id: `${block.id}-chunk-${index}`,
-        block,
-        text,
-        charStart,
-        charEnd: charStart + text.length,
-        title:
-          index === 0 && block.title
-            ? displayText(block.title, chineseScript)
-            : undefined,
-      };
-      charStart = item.charEnd;
-      return item;
-    });
+    return {
+      id: block.id,
+      block,
+      text,
+      charStart: 0,
+      charEnd: text.length,
+      title: block.title ? displayText(block.title, chineseScript) : undefined,
+    };
   });
 }
 
@@ -1776,39 +1775,6 @@ function escapeHtml(value: string) {
 
 function escapeAttribute(value: string) {
   return escapeHtml(value);
-}
-
-function splitReaderText(text: string, targetLength = 260) {
-  if (text.length <= targetLength) {
-    return [text];
-  }
-
-  const chunks: string[] = [];
-  let start = 0;
-
-  while (start < text.length) {
-    let end = Math.min(text.length, start + targetLength);
-
-    if (end < text.length) {
-      const windowStart = Math.min(end - 1, start + Math.floor(targetLength * 0.55));
-      const slice = text.slice(windowStart, end);
-      const punctuationIndex = Math.max(
-        slice.lastIndexOf("。"),
-        slice.lastIndexOf("；"),
-        slice.lastIndexOf("！"),
-        slice.lastIndexOf("？"),
-      );
-
-      if (punctuationIndex >= 0) {
-        end = windowStart + punctuationIndex + 1;
-      }
-    }
-
-    chunks.push(text.slice(start, end));
-    start = end;
-  }
-
-  return chunks;
 }
 
 function Button({
@@ -2893,7 +2859,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   bookmark: {
-    flex: 1,
     fontSize: 15,
     lineHeight: 24,
   },
@@ -2917,6 +2882,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     minHeight: 44,
+  },
+  bookmarkDetails: {
+    flex: 1,
+    gap: 6,
+  },
+  bookmarkMeta: {
+    alignItems: "flex-end",
+    gap: 6,
   },
   bookmarkAction: {
     fontSize: 13,
