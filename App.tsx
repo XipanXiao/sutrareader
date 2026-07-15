@@ -151,6 +151,15 @@ function SutraReaderApp() {
     });
   }, [currentWork.id]);
 
+  useEffect(() => {
+    if (!loadingMessage || loadingMessage.startsWith("正在")) {
+      return;
+    }
+
+    const timeout = setTimeout(() => setLoadingMessage(undefined), 3600);
+    return () => clearTimeout(timeout);
+  }, [loadingMessage]);
+
   const persist = (nextState: ReaderState) => {
     const normalized = normalizeReaderState(nextState);
     setReaderState(normalized);
@@ -540,30 +549,44 @@ function SutraReaderApp() {
           onOpenNextWork={openNextWork}
         />
       ) : null}
-      <LoadingOverlay theme={theme} message={loadingMessage} />
+      <LoadingOverlay
+        theme={theme}
+        message={loadingMessage}
+        onDismiss={() => setLoadingMessage(undefined)}
+      />
     </SafeAreaView>
   );
 }
 
-function LoadingOverlay({ theme, message }: { theme: Theme; message?: string }) {
+function LoadingOverlay({
+  theme,
+  message,
+  onDismiss,
+}: {
+  theme: Theme;
+  message?: string;
+  onDismiss: () => void;
+}) {
   if (!message) {
     return null;
   }
 
   return (
-    <View style={styles.loadingOverlay} pointerEvents="auto">
+    <Pressable style={styles.loadingOverlay} pointerEvents="auto" onPress={onDismiss}>
       <View
         style={[
           styles.loadingCard,
           { backgroundColor: theme.input, borderColor: theme.border },
         ]}
       >
-        <ActivityIndicator color={theme.accent} size="small" />
+        {message.startsWith("正在") ? (
+          <ActivityIndicator color={theme.accent} size="small" />
+        ) : null}
         <Text style={[styles.loadingOverlayText, { color: theme.text }]}>
           {message}
         </Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
