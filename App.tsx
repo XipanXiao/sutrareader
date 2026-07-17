@@ -1291,6 +1291,7 @@ function ReaderScreen({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchStatus, setSearchStatus] = useState("");
+  const [searchHasHits, setSearchHasHits] = useState(false);
 
   useEffect(() => {
     workRef.current = work;
@@ -1363,6 +1364,8 @@ function ReaderScreen({
           charOffset?: number;
           scrollFraction?: number;
           found?: boolean;
+          current?: number;
+          total?: number;
         }
       | undefined;
 
@@ -1382,7 +1385,10 @@ function ReaderScreen({
     }
 
     if (message.type === "searchResult") {
-      setSearchStatus(message.found ? "已定位" : "未找到");
+      const total = message.total ?? 0;
+      const current = message.current ?? 0;
+      setSearchHasHits(Boolean(message.found && total > 0));
+      setSearchStatus(message.found ? `${current}/${total}` : "未找到");
       return;
     }
 
@@ -1412,12 +1418,21 @@ function ReaderScreen({
     const query = searchQuery.trim();
     if (!query) {
       setSearchStatus("");
+      setSearchHasHits(false);
       return;
     }
 
     setSearchStatus("查找中");
     webViewRef.current?.injectJavaScript(
       `window.__sutraSearch && window.__sutraSearch(${JSON.stringify(query)}); true;`,
+    );
+  };
+
+  const moveReaderSearch = (direction: "previous" | "next") => {
+    webViewRef.current?.injectJavaScript(
+      `window.__sutraSearchMove && window.__sutraSearchMove(${JSON.stringify(
+        direction,
+      )}); true;`,
     );
   };
 
@@ -1429,6 +1444,7 @@ function ReaderScreen({
         onPress={() => {
           setSearchOpen((value) => !value);
           setSearchStatus("");
+          setSearchHasHits(false);
         }}
         style={styles.iconButton}
       >
@@ -1454,8 +1470,11 @@ function ReaderScreen({
             theme={theme}
             query={searchQuery}
             status={searchStatus}
+            hasHits={searchHasHits}
             onChangeQuery={setSearchQuery}
             onSubmit={runReaderSearch}
+            onPrevious={() => moveReaderSearch("previous")}
+            onNext={() => moveReaderSearch("next")}
           />
         ) : null}
         <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={2}>
@@ -1486,8 +1505,11 @@ function ReaderScreen({
           theme={theme}
           query={searchQuery}
           status={searchStatus}
+          hasHits={searchHasHits}
           onChangeQuery={setSearchQuery}
           onSubmit={runReaderSearch}
+          onPrevious={() => moveReaderSearch("previous")}
+          onNext={() => moveReaderSearch("next")}
         />
       ) : null}
       <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={2}>
@@ -1753,42 +1775,82 @@ ${endPanel}
       node.classList.remove("search-hit");
     });
   };
+
+  let searchMatches = [];
+  let searchMatchIndex = -1;
+
+  const reportSearch = (found) => {
+    post({
+      type: "searchResult",
+      found,
+      current: found ? searchMatchIndex + 1 : 0,
+      total: searchMatches.length
+    });
+  };
+
+  const goToSearchMatch = (index) => {
+    clearSearchHit();
+    if (!searchMatches.length) {
+      searchMatchIndex = -1;
+      reportSearch(false);
+      return;
+    }
+
+    searchMatchIndex = (index + searchMatches.length) % searchMatches.length;
+    const match = searchMatches[searchMatchIndex];
+    const anchorOffset = Math.floor(match.index / ${readerAnchorStep}) * ${readerAnchorStep};
+    const anchorId = match.block.dataset.itemId + "-c" + anchorOffset;
+    const anchor = document.getElementById(anchorId) || match.block;
+    selectBlock(match.block);
+    anchor.classList.add("search-hit");
+    anchor.scrollIntoView({ block: "start", inline: "nearest" });
+    window.setTimeout(() => {
+      post({
+        type: "select",
+        itemId: match.block.dataset.itemId,
+        charOffset: Number(match.block.dataset.charStart || 0) + match.index,
+        scrollFraction: scrollFraction()
+      });
+      reportSearch(true);
+    }, 80);
+  };
+
   window.__sutraSearch = (query) => {
     const term = String(query || "").trim();
     clearSearchHit();
+    searchMatches = [];
+    searchMatchIndex = -1;
 
     if (!term) {
-      post({ type: "searchResult", found: false });
+      reportSearch(false);
       return;
     }
 
     const blocks = Array.from(document.querySelectorAll(".reader-block"));
     for (const block of blocks) {
       const text = block.querySelector("p")?.textContent || "";
-      const index = text.indexOf(term);
-      if (index < 0) {
-        continue;
+      let index = text.indexOf(term);
+      while (index >= 0) {
+        searchMatches.push({ block, index });
+        index = text.indexOf(term, index + Math.max(1, term.length));
       }
+    }
 
-      const anchorOffset = Math.floor(index / ${readerAnchorStep}) * ${readerAnchorStep};
-      const anchorId = block.dataset.itemId + "-c" + anchorOffset;
-      const anchor = document.getElementById(anchorId) || block;
-      selectBlock(block);
-      anchor.classList.add("search-hit");
-      anchor.scrollIntoView({ block: "start", inline: "nearest" });
-      window.setTimeout(() => {
-        post({
-          type: "select",
-          itemId: block.dataset.itemId,
-          charOffset: Number(block.dataset.charStart || 0) + index,
-          scrollFraction: scrollFraction()
-        });
-        post({ type: "searchResult", found: true });
-      }, 80);
+    if (!searchMatches.length) {
+      reportSearch(false);
       return;
     }
 
-    post({ type: "searchResult", found: false });
+    goToSearchMatch(0);
+  };
+
+  window.__sutraSearchMove = (direction) => {
+    if (!searchMatches.length) {
+      reportSearch(false);
+      return;
+    }
+
+    goToSearchMatch(searchMatchIndex + (direction === "previous" ? -1 : 1));
   };
   document.addEventListener("click", (event) => {
     const nextButton = event.target.closest("#next-work");
@@ -1970,14 +2032,20 @@ function ReaderSearchBar({
   theme,
   query,
   status,
+  hasHits,
   onChangeQuery,
   onSubmit,
+  onPrevious,
+  onNext,
 }: {
   theme: Theme;
   query: string;
   status: string;
+  hasHits: boolean;
   onChangeQuery: (value: string) => void;
   onSubmit: () => void;
+  onPrevious: () => void;
+  onNext: () => void;
 }) {
   return (
     <View style={styles.readerSearchRow}>
@@ -2003,6 +2071,26 @@ function ReaderSearchBar({
       >
         <Text style={[styles.readerSearchButtonText, { color: theme.onAccent }]}>查找</Text>
       </Pressable>
+      {hasHits ? (
+        <>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="上一个"
+            onPress={onPrevious}
+            style={[styles.readerSearchStepButton, { borderColor: theme.border }]}
+          >
+            <Text style={[styles.readerSearchStepText, { color: theme.accent }]}>‹</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="下一个"
+            onPress={onNext}
+            style={[styles.readerSearchStepButton, { borderColor: theme.border }]}
+          >
+            <Text style={[styles.readerSearchStepText, { color: theme.accent }]}>›</Text>
+          </Pressable>
+        </>
+      ) : null}
       {status ? (
         <Text style={[styles.readerSearchStatus, { color: theme.muted }]}>{status}</Text>
       ) : null}
@@ -3248,6 +3336,19 @@ const styles = StyleSheet.create({
   readerSearchButtonText: {
     fontSize: 14,
     fontWeight: "700",
+  },
+  readerSearchStepButton: {
+    alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 40,
+    justifyContent: "center",
+    width: 34,
+  },
+  readerSearchStepText: {
+    fontSize: 24,
+    fontWeight: "700",
+    lineHeight: 28,
   },
   readerSearchStatus: {
     fontSize: 12,
