@@ -170,7 +170,7 @@ function SutraReaderApp() {
     setLoadingMessage(`正在打开《${workTitle(currentWork, chineseScript)}》`);
     await waitForLoadingPaint();
     setCurrentPosition(position);
-    persist({ ...readerState, lastPosition: position });
+    persist({ ...readerState, activeSessionStart: position, lastPosition: position });
     setReaderOpenKey((value) => value + 1);
     setReaderReturnScreen(returnScreen === "reader" ? "home" : returnScreen);
     setScreen("reader");
@@ -195,7 +195,11 @@ function SutraReaderApp() {
       );
       const start = positionOverride ?? bookmark?.position ?? offsetToPosition(work, 0);
       setCurrentPosition(start);
-      persist({ ...baseState, lastPosition: start });
+      persist({
+        ...baseState,
+        activeSessionStart: destination === "reader" ? start : baseState.activeSessionStart,
+        lastPosition: start,
+      });
       if (destination === "reader") {
         setReaderOpenKey((value) => value + 1);
         setReaderReturnScreen(
@@ -235,7 +239,7 @@ function SutraReaderApp() {
       const position = positionForBookmarkInWork(bookmark, work);
       setCurrentWork(work);
       setCurrentPosition(position);
-      persist({ ...readerState, lastPosition: position });
+      persist({ ...readerState, activeSessionStart: position, lastPosition: position });
       setReaderOpenKey((value) => value + 1);
       setReaderReturnScreen(screen === "reader" ? readerReturnScreen : screen);
       setScreen("reader");
@@ -270,7 +274,11 @@ function SutraReaderApp() {
       const nextPosition = positionForSavedPositionInWork(position, work);
       setCurrentWork(work);
       setCurrentPosition(nextPosition);
-      persist({ ...readerState, lastPosition: nextPosition });
+      persist({
+        ...readerState,
+        activeSessionStart: nextPosition,
+        lastPosition: nextPosition,
+      });
       setReaderOpenKey((value) => value + 1);
       setReaderReturnScreen("home");
       setScreen("reader");
@@ -319,9 +327,13 @@ function SutraReaderApp() {
   ) => {
     const positionIsAtEnd = isEndPosition(currentWork, position);
     const shouldCompleteWork = completeCurrentWork || positionIsAtEnd;
+    const sessionStart =
+      readerState.activeSessionStart?.workId === currentWork.id
+        ? positionForSavedPositionInWork(readerState.activeSessionStart, currentWork)
+        : undefined;
     const start = shouldCompleteWork
       ? offsetToPosition(currentWork, 0, 0)
-      : primaryBookmark?.position ?? position;
+      : primaryBookmark?.position ?? sessionStart ?? offsetToPosition(currentWork, 0, 0);
     const range = createReadRange(currentWork, start, position);
     const bookmark = createBookmark(currentWork, position, true);
     const completionAnchor = {
@@ -651,7 +663,7 @@ function HomeScreen({
       <View style={styles.headerRow}>
         <View style={styles.headerCopy}>
           <Text style={[styles.appTitle, { color: theme.text }]}>阅藏</Text>
-          <Text style={[styles.subtitle, { color: theme.muted }]} numberOfLines={2}>
+          <Text style={[styles.subtitle, { color: theme.muted }]} numberOfLines={1}>
             深入经藏，智慧如海
           </Text>
         </View>
@@ -1477,12 +1489,12 @@ function ReaderScreen({
             onNext={() => moveReaderSearch("next")}
           />
         ) : null}
-        <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={2}>
-          {displayText(work.subtitle, chineseScript)}
-        </Text>
-        <View style={styles.readerProgressRow}>
-          <WorkProgressBadge theme={theme} progress={progress} />
-          <MiniBar theme={theme} fraction={progress} />
+        <View style={styles.readerMetaRow}>
+          <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={1}>
+            {displayText(work.subtitle, chineseScript)}
+          </Text>
+          <WorkProgressBadge theme={theme} progress={progress} compact />
+          <MiniBar theme={theme} fraction={progress} compact />
         </View>
         <View style={styles.readerLoading}>
           <ActivityIndicator color={theme.accent} />
@@ -1512,12 +1524,12 @@ function ReaderScreen({
           onNext={() => moveReaderSearch("next")}
         />
       ) : null}
-      <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={2}>
-        {displayText(work.subtitle, chineseScript)}
-      </Text>
-      <View style={styles.readerProgressRow}>
-        <WorkProgressBadge theme={theme} progress={progress} />
-        <MiniBar theme={theme} fraction={progress} />
+      <View style={styles.readerMetaRow}>
+        <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={1}>
+          {displayText(work.subtitle, chineseScript)}
+        </Text>
+        <WorkProgressBadge theme={theme} progress={progress} compact />
+        <MiniBar theme={theme} fraction={progress} compact />
       </View>
 
       <WebView
@@ -2134,23 +2146,41 @@ function TopBar({
 function WorkProgressBadge({
   theme,
   progress,
+  compact = false,
 }: {
   theme: Theme;
   progress: number;
+  compact?: boolean;
 }) {
   const complete = progress >= completedThreshold;
   const started = progress > 0;
-  const label = complete
-    ? "已完成"
-    : started
-      ? `已读 ${formatPercent(progress)}`
-      : "未读";
+  const label = compact
+    ? formatPercent(progress)
+    : complete
+      ? "已完成"
+      : started
+        ? `已读 ${formatPercent(progress)}`
+        : "未读";
   const color = complete ? theme.complete : started ? theme.accent : theme.muted;
   const borderColor = complete ? theme.complete : theme.border;
 
   return (
-    <View style={[styles.workProgressBadge, { borderColor }]}>
-      <Text style={[styles.workProgressText, { color }]}>{label}</Text>
+    <View
+      style={[
+        styles.workProgressBadge,
+        compact ? styles.workProgressBadgeCompact : null,
+        { borderColor },
+      ]}
+    >
+      <Text
+        style={[
+          styles.workProgressText,
+          compact ? styles.workProgressTextCompact : null,
+          { color },
+        ]}
+      >
+        {label}
+      </Text>
     </View>
   );
 }
@@ -2935,7 +2965,9 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   headerCopy: {
+    alignItems: "baseline",
     flex: 1,
+    flexDirection: "row",
     paddingRight: 12,
   },
   appTitle: {
@@ -2944,9 +2976,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   subtitle: {
+    flexShrink: 1,
     fontSize: 16,
     lineHeight: 24,
-    marginTop: 4,
+    marginLeft: 8,
   },
   catalogMeta: {
     fontSize: 13,
@@ -3294,7 +3327,7 @@ const styles = StyleSheet.create({
     width: 76,
   },
   miniBarCompact: {
-    width: 54,
+    width: 36,
   },
   miniBarFill: {
     borderRadius: 4,
@@ -3308,9 +3341,16 @@ const styles = StyleSheet.create({
     minHeight: 24,
     paddingHorizontal: 8,
   },
+  workProgressBadgeCompact: {
+    minHeight: 20,
+    paddingHorizontal: 5,
+  },
   workProgressText: {
     fontSize: 12,
     fontWeight: "700",
+  },
+  workProgressTextCompact: {
+    fontSize: 10,
   },
   readerSearchRow: {
     alignItems: "center",
@@ -3355,16 +3395,15 @@ const styles = StyleSheet.create({
     minWidth: 42,
   },
   readerSubhead: {
+    flex: 1,
     fontSize: 14,
     lineHeight: 20,
-    marginBottom: 8,
-    textAlign: "center",
+    paddingRight: 8,
   },
-  readerProgressRow: {
+  readerMetaRow: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 8,
-    justifyContent: "center",
+    gap: 5,
     marginBottom: 10,
   },
   readerWebView: {
