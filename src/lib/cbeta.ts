@@ -14,7 +14,7 @@ const toSimplified = (text: string) =>
     .replace(/𤦲/g, "璩");
 const preferredSourceKey = "sutrareader.cbetaPreferredSource.v1";
 const sourceTimeoutMs = 8000;
-const cbetaParserVersion = 3;
+const cbetaParserVersion = 4;
 const cbetaSourceTemplates = [
   {
     id: "github",
@@ -239,6 +239,7 @@ const stripTags = (xml: string, gaijiMap = new Map<string, string>()) =>
     xml
       .replace(/<note[\s\S]*?<\/note>/g, "")
       .replace(/<app[\s\S]*?<\/app>/g, "")
+      .replace(/<cb:mulu\b[\s\S]*?<\/cb:mulu>/g, "")
       .replace(/<choice[\s\S]*?<reg[^>]*>([\s\S]*?)<\/reg>[\s\S]*?<\/choice>/g, "$1")
       .replace(/<g\b([^>]*)>([\s\S]*?)<\/g>/g, (_match, attrs: string, content: string) => {
         const ref = gaijiRef(attrs);
@@ -365,6 +366,21 @@ const splitIntoBlocks = (
   let buffer: string[] = [];
   let order = 0;
 
+  const ensureSection = (sectionTitle = title) => {
+    if (!currentSection) {
+      currentSection = {
+        id: `${item.id}-section-${sections.length}`,
+        workId: item.id,
+        title: toSimplified(sectionTitle),
+        order: sections.length,
+        blockIds: [],
+      };
+      sections.push(currentSection);
+    }
+
+    return currentSection;
+  };
+
   const beginSection = (sectionTitle: string) => {
     if (currentSection) {
       flushBlock();
@@ -379,29 +395,17 @@ const splitIntoBlocks = (
     sections.push(currentSection);
   };
 
-  const flushBlock = () => {
-    const source = normalizeChineseText(stripTags(buffer.join(""), gaijiMap));
-    buffer = [];
-
+  const addBlock = (source: string) => {
     if (!source || source.length < 2) {
       return;
     }
 
-    if (!currentSection) {
-      currentSection = {
-        id: `${item.id}-section-${sections.length}`,
-        workId: item.id,
-        title: toSimplified(title),
-        order: sections.length,
-        blockIds: [],
-      };
-      sections.push(currentSection);
-    }
+    const section = ensureSection();
 
     const block: TextBlock = {
       id: `${item.id}-block-${blocks.length}`,
       workId: item.id,
-      sectionId: currentSection.id,
+      sectionId: section.id,
       anchorId: `${item.id}-${order}`,
       order,
       textSource: source,
@@ -409,11 +413,23 @@ const splitIntoBlocks = (
     };
 
     blocks.push(block);
-    currentSection.blockIds.push(block.id);
+    section.blockIds.push(block.id);
     order += 1;
   };
 
-  const tokenPattern = /<head\b[^>]*>[\s\S]*?<\/head>|<p\b[^>]*>|<\/(?:p|lg|l|item|trailer)>|<milestone\b[^>]*unit="juan"[^>]*\/>/g;
+  const flushBlock = () => {
+    const source = normalizeChineseText(stripTags(buffer.join(""), gaijiMap));
+    buffer = [];
+    addBlock(source);
+  };
+
+  const addStandaloneBlock = (xml: string) => {
+    flushBlock();
+    const source = normalizeChineseText(stripTags(xml, gaijiMap));
+    addBlock(source);
+  };
+
+  const tokenPattern = /<head\b[^>]*>[\s\S]*?<\/head>|<cb:jhead\b[^>]*>[\s\S]*?<\/cb:jhead>|<byline\b[^>]*>[\s\S]*?<\/byline>|<p\b[^>]*>|<\/(?:p|lg|l|item|trailer)>|<milestone\b[^>]*unit="juan"[^>]*\/>/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -421,8 +437,14 @@ const splitIntoBlocks = (
     buffer.push(bodyXml.slice(lastIndex, match.index));
     const token = match[0];
 
-    if (token.startsWith("<head")) {
-      beginSection(stripTags(token, gaijiMap));
+    if (token.startsWith("<head") || token.startsWith("<cb:jhead")) {
+      const sectionTitle = normalizeChineseText(stripTags(token, gaijiMap));
+      beginSection(sectionTitle);
+      addStandaloneBlock(token);
+    } else if (token.startsWith("<byline")) {
+      addStandaloneBlock(token);
+    } else if (token.startsWith("<p") || token.startsWith("<milestone")) {
+      flushBlock();
     } else if (token.startsWith("</")) {
       flushBlock();
     }
