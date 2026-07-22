@@ -488,7 +488,6 @@ function SutraReaderApp() {
           onExportProgress={exportProgress}
           onImportProgress={importProgress}
           onToggleChineseScript={toggleChineseScript}
-          onLoadDefault={() => openCatalogItem(defaultCatalogItem)}
         />
       ) : null}
       {screen === "category" && selectedCategory ? (
@@ -619,7 +618,6 @@ function HomeScreen({
   onExportProgress,
   onImportProgress,
   onToggleChineseScript,
-  onLoadDefault,
 }: {
   theme: Theme;
   currentWork: SutraWork;
@@ -637,7 +635,6 @@ function HomeScreen({
   onExportProgress: () => void;
   onImportProgress: () => void;
   onToggleChineseScript: () => void;
-  onLoadDefault: () => void;
 }) {
   const activeBookmarks = readerState.bookmarks.filter(
     (bookmark) =>
@@ -717,14 +714,6 @@ function HomeScreen({
           onPress={onToggleChineseScript}
         />
       </View>
-
-      {currentWork.id === sampleSutra.id ? (
-        <Pressable onPress={onLoadDefault} style={styles.notice}>
-          <Text style={[styles.noticeText, { color: theme.accent }]}>
-            下载第一部 CBETA 文献以替换示例内容。
-          </Text>
-        </Pressable>
-      ) : null}
 
       <View style={styles.panel}>
         <Text style={[styles.panelTitle, { color: theme.text }]}>书签</Text>
@@ -3137,14 +3126,6 @@ const styles = StyleSheet.create({
   compactButtonText: {
     fontSize: 14,
     fontWeight: "700",
-  },
-  notice: {
-    marginTop: 16,
-  },
-  noticeText: {
-    fontSize: 14,
-    fontWeight: "700",
-    lineHeight: 20,
   },
   panel: {
     marginTop: 24,
