@@ -6,15 +6,24 @@ import { CbetaCatalogItem, SutraSection, SutraWork, TextBlock } from "../types";
 const cacheDirectory = `${FileSystem.documentDirectory ?? ""}cbeta-cache`;
 const convertToSimplified = Converter({ from: "tw", to: "cn" });
 const toSimplified = (text: string) =>
-  convertToSimplified(text)
-    .replace(/𫓴/g, "矛")
-    .replace(/𫄧/g, "线")
-    .replace(/𣽈/g, "濡")
-    .replace(/𭶑/g, "黠")
-    .replace(/𤦲/g, "璩");
+  normalizeResidualDisplayGlyphs(normalizeOpenCcDisplayGlyphs(normalizeDisplayGlyphs(convertToSimplified(text))));
+const normalizeOpenCcDisplayGlyphs = (text: string) =>
+  text.replace(/𩙥/g, "颰");
+const normalizeDisplayGlyphs = (text: string) =>
+  text
+    .replace(/\uF0A70/g, "盡")
+    .replace(/CBETA CHARACTER CB02672/g, "盡")
+    .replace(/CBETA CHARACTER CB\d+[a-z]?/g, "□");
+const normalizeResidualDisplayGlyphs = (text: string) =>
+  text.replace(/[\u{20000}-\u{3FFFF}\u{F0000}-\u{10FFFF}]/gu, "□");
 const preferredSourceKey = "sutrareader.cbetaPreferredSource.v1";
 const sourceTimeoutMs = 8000;
-const cbetaParserVersion = 4;
+const apiHtmlMaxJuans = 40;
+const cbetaParserVersion = 9;
+const cbetaApiBases = [
+  "https://cbdata.dila.edu.tw/stable",
+  "https://api.cbetaonline.cn/stable",
+] as const;
 const cbetaSourceTemplates = [
   {
     id: "github",
@@ -71,10 +80,112 @@ export const loadCbetaWork = async (item: CbetaCatalogItem): Promise<SutraWork> 
     }
   }
 
-  const xml = await fetchCbetaXml(item);
-  const work = parseCbetaXml(item, xml);
+  const work = await fetchCbetaApiHtmlWork(item).catch(async () => {
+    const xml = await fetchCbetaXml(item);
+    return parseCbetaXml(item, xml);
+  });
   await FileSystem.writeAsStringAsync(cachePath, JSON.stringify(work));
   return work;
+};
+
+type CbetaWorkInfo = {
+  title?: string;
+  byline?: string;
+  juan?: number;
+  juan_list?: string;
+};
+
+type CbetaWorksResponse = {
+  num_found?: number;
+  results?: CbetaWorkInfo[];
+};
+
+type CbetaJuanResponse = {
+  num_found?: number;
+  results?: string[];
+};
+
+const fetchCbetaApiHtmlWork = async (item: CbetaCatalogItem): Promise<SutraWork> => {
+  const apiWorkId = apiWorkIdFor(item);
+  const workInfoResponse = await fetchCbetaApiJson<CbetaWorksResponse>(
+    `works?work=${encodeURIComponent(apiWorkId)}`,
+  );
+  const workInfo = workInfoResponse.results?.[0];
+  const juans = parseJuanList(workInfo?.juan_list, workInfo?.juan);
+
+  if (!workInfo || !juans.length || juans.length > apiHtmlMaxJuans) {
+    throw new Error("CBETA API source skipped for this work");
+  }
+
+  const htmlByJuan = await fetchCbetaApiJuans(apiWorkId, juans);
+  return parseCbetaApiHtml(item, workInfo, htmlByJuan);
+};
+
+const fetchCbetaApiJuans = async (apiWorkId: string, juans: number[]) => {
+  const htmlByJuan: { juan: number; html: string }[] = [];
+  const batchSize = 4;
+
+  for (let index = 0; index < juans.length; index += batchSize) {
+    const batch = juans.slice(index, index + batchSize);
+    const results = await Promise.all(
+      batch.map(async (juan) => {
+        const response = await fetchCbetaApiJson<CbetaJuanResponse>(
+          `juans?work=${encodeURIComponent(apiWorkId)}&juan=${juan}`,
+        );
+        const html = response.results?.[0];
+        if (!html) {
+          throw new Error(`CBETA API returned no content for ${apiWorkId} 卷 ${juan}`);
+        }
+        return { juan, html };
+      }),
+    );
+    htmlByJuan.push(...results);
+  }
+
+  return htmlByJuan;
+};
+
+const fetchCbetaApiJson = async <T,>(path: string): Promise<T> => {
+  const controllers = cbetaApiBases.map(() => new AbortController());
+  try {
+    const { text } = await promiseAny(
+      cbetaApiBases.map(async (base, index) => {
+        const text = await fetchTextWithTimeout(
+          `${base}/${path}`,
+          sourceTimeoutMs,
+          controllers[index].signal,
+        );
+        if (!text.trim().startsWith("{")) {
+          throw new Error("返回的内容不是有效的 CBETA API JSON");
+        }
+        return { text };
+      }),
+    );
+    return JSON.parse(text) as T;
+  } finally {
+    controllers.forEach((controller) => controller.abort());
+  }
+};
+
+const apiWorkIdFor = (item: CbetaCatalogItem) =>
+  `${item.canon}${item.number.toUpperCase()}`;
+
+const parseJuanList = (juanList: string | undefined, juanCount: number | undefined) => {
+  const fromList =
+    juanList
+      ?.split(",")
+      .map((item) => Number.parseInt(item.trim(), 10))
+      .filter((item) => Number.isFinite(item)) ?? [];
+
+  if (fromList.length) {
+    return fromList;
+  }
+
+  if (juanCount && Number.isFinite(juanCount)) {
+    return Array.from({ length: juanCount }, (_item, index) => index + 1);
+  }
+
+  return [];
 };
 
 const fetchCbetaXml = async (item: CbetaCatalogItem) => {
@@ -193,10 +304,10 @@ const shouldRefreshCachedWork = (work: SutraWork) => {
 
   const hasUnresolvedGaiji = work.blocks.some(
     (block) =>
-      block.textSimplified.includes("□") ||
-      block.textSource.includes("□") ||
       block.textSimplified.includes("�") ||
-      block.textSource.includes("�"),
+      block.textSource.includes("�") ||
+      block.textSimplified.includes("CBETA CHARACTER") ||
+      block.textSource.includes("CBETA CHARACTER"),
   );
   if (hasUnresolvedGaiji) {
     return true;
@@ -224,6 +335,166 @@ const normalizeCachedWork = (work: SutraWork) => {
     work: changed ? { ...work, blocks } : work,
   };
 };
+
+const parseCbetaApiHtml = (
+  item: CbetaCatalogItem,
+  workInfo: CbetaWorkInfo,
+  htmlByJuan: { juan: number; html: string }[],
+): SutraWork => {
+  const sections: SutraSection[] = [];
+  const blocks: TextBlock[] = [];
+  let currentSection: SutraSection | undefined;
+
+  const ensureSection = (title: string) => {
+    if (!currentSection || currentSection.title !== title) {
+      currentSection = {
+        id: `${item.id}-section-${sections.length}`,
+        workId: item.id,
+        title: toSimplified(title),
+        order: sections.length,
+        blockIds: [],
+      };
+      sections.push(currentSection);
+    }
+
+    return currentSection;
+  };
+
+  const addBlock = (source: string, sectionTitle: string) => {
+    const textSource = normalizeChineseText(
+      normalizeResidualDisplayGlyphs(normalizeDisplayGlyphs(source)),
+    );
+    if (!textSource || textSource.length < 2) {
+      return;
+    }
+
+    const section = ensureSection(sectionTitle);
+    const block: TextBlock = {
+      id: `${item.id}-block-${blocks.length}`,
+      workId: item.id,
+      sectionId: section.id,
+      anchorId: `${item.id}-${blocks.length}`,
+      order: blocks.length,
+      textSource,
+      textSimplified: toSimplified(textSource),
+    };
+
+    blocks.push(block);
+    section.blockIds.push(block.id);
+  };
+
+  htmlByJuan.forEach(({ juan, html }) => {
+    const gaijiMap = extractHtmlGaijiMap(html);
+    const fallbackSectionTitle =
+      html.match(/<title[^>]*>([\s\S]*?)<\/title>/)?.[1] ??
+      workInfo.title ??
+      item.title;
+    let sectionTitle = normalizeChineseText(stripHtml(fallbackSectionTitle, gaijiMap));
+    const readableHtml = html.replace(/<div\b[^>]*id=(["'])back\1[\s\S]*$/i, "");
+    const paragraphPattern = /<p\b([^>]*)>([\s\S]*?)<\/p>/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = paragraphPattern.exec(readableHtml))) {
+      const [, attrs, body] = match;
+      const className = attrs.match(/\bclass=(["'])(.*?)\1/)?.[2] ?? "";
+      const text = stripHtml(body, gaijiMap);
+
+      if (className.includes("head") || className.includes("juan")) {
+        sectionTitle = normalizeChineseText(text) || sectionTitle;
+        addBlock(text, sectionTitle);
+      } else if (className.includes("byline")) {
+        addBlock(text, sectionTitle);
+      } else {
+        addBlock(text, sectionTitle || `${item.title} 第${juan}卷`);
+      }
+    }
+  });
+
+  if (!blocks.length) {
+    throw new Error("CBETA API source produced no readable blocks");
+  }
+
+  return {
+    id: item.id,
+    title: toSimplified(workInfo.title ?? item.title),
+    subtitle: [item.canonTitle, item.sourceId, toSimplified(workInfo.byline ?? "")]
+      .filter(Boolean)
+      .join(" - "),
+    parserVersion: cbetaParserVersion,
+    sourcePath: item.path,
+    sourceUrl: `https://cbdata.dila.edu.tw/stable/juans?work=${apiWorkIdFor(item)}`,
+    sourceAttribution:
+      "Text source: CBETA API HTML for UI / CBETA XML P5. Please keep CBETA attribution and source availability notes with redistributed text.",
+    sections: sections.filter((section) => section.blockIds.length > 0),
+    blocks,
+  };
+};
+
+type HtmlGaiji = {
+  normalized?: string;
+  composition?: string;
+  unicode?: string;
+};
+
+const extractHtmlGaijiMap = (html: string) => {
+  const map = new Map<string, HtmlGaiji>();
+  const pattern = /<span\b([^>]*\bclass=(["'])gaijiInfo\2[^>]*)>([\s\S]*?)<\/span>/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(html))) {
+    const attrs = match[1];
+    const id = htmlAttr(attrs, "id");
+    if (!id) {
+      continue;
+    }
+
+    map.set(id, {
+      normalized: htmlAttr(attrs, "norm"),
+      composition: htmlAttr(attrs, "zzs"),
+      unicode: htmlAttr(attrs, "uni_char") ?? stripHtml(match[3]),
+    });
+  }
+
+  return map;
+};
+
+const htmlAttr = (attrs: string, name: string) =>
+  attrs.match(new RegExp(`\\b${name}=(["'])(.*?)\\1`))?.[2];
+
+const displayGaiji = (gaiji: HtmlGaiji | undefined, fallback: string) => {
+  if (gaiji?.normalized) {
+    return gaiji.normalized;
+  }
+
+  const visible = normalizeDisplayGlyphs(stripHtml(fallback));
+  if (visible && !containsDisplayRiskGlyph(visible)) {
+    return visible;
+  }
+
+  return gaiji?.composition ?? "□";
+};
+
+const containsDisplayRiskGlyph = (text: string) =>
+  /[\u{20000}-\u{3FFFF}\u{F0000}-\u{10FFFF}]/u.test(text);
+
+const stripHtml = (html: string, gaijiMap = new Map<string, HtmlGaiji>()) =>
+  decodeXml(
+    html
+      .replace(/<div\b[^>]*id=(["'])back\1[\s\S]*?<\/div>/g, "")
+      .replace(/<a\b[^>]*class=(["'])noteAnchor\b[^>]*\1[^>]*><\/a>/g, "")
+      .replace(/<span\b[^>]*class=(["'])(?:lb|lineInfo)\b[^>]*\1[^>]*>[\s\S]*?<\/span>/g, "")
+      .replace(/<span\b[^>]*class=(["'])pc\1[^>]*>([\s\S]*?)<\/span>/g, "$2")
+      .replace(
+        /<a\b([^>]*class=(["'])gaijiAnchor\b[^>]*\2[^>]*)>([\s\S]*?)<\/a>/g,
+        (_match, attrs: string, _quote: string, content: string) => {
+          const ref = attrs.match(/\bhref=(["'])#([^"']+)\1/)?.[2];
+          return displayGaiji(ref ? gaijiMap.get(ref) : undefined, content);
+        },
+      )
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
 
 const decodeXml = (text: string) =>
   text
@@ -267,7 +538,6 @@ const extractGaijiMap = (xml: string) => {
     const value =
       normalizedFormMapping(body) ??
       unicodeMapping(body) ??
-      firstTagText(body, "charName") ??
       firstTagText(body, "mapping");
     if (value) {
       map.set(id, value);
@@ -402,14 +672,15 @@ const splitIntoBlocks = (
 
     const section = ensureSection();
 
+    const textSource = normalizeResidualDisplayGlyphs(normalizeDisplayGlyphs(source));
     const block: TextBlock = {
       id: `${item.id}-block-${blocks.length}`,
       workId: item.id,
       sectionId: section.id,
       anchorId: `${item.id}-${order}`,
       order,
-      textSource: source,
-      textSimplified: toSimplified(source),
+      textSource,
+      textSimplified: toSimplified(textSource),
     };
 
     blocks.push(block);

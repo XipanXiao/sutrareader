@@ -14246,9 +14246,9 @@ export const cbetaCatalog = [
     "title": "佛開解梵志阿颰經",
     "path": "T/T01/T01n0020.xml",
     "rawUrl": "https://raw.githubusercontent.com/cbeta-org/xml-p5/master/T/T01/T01n0020.xml",
-    "titleSimplified": "佛开解梵志阿𩙥经",
+    "titleSimplified": "佛开解梵志阿颰经",
     "canonTitleSimplified": "大正藏",
-    "searchText": "佛开解梵志阿𩙥经 大正藏 t01n0020 t t01 0020 t/t01/t01n0020.xml"
+    "searchText": "佛开解梵志阿颰经 大正藏 t01n0020 t t01 0020 t/t01/t01n0020.xml"
   },
   {
     "id": "T01n0021",
@@ -34294,9 +34294,9 @@ export const cbetaCatalog = [
     "title": "佛說玄師颰陀所說神呪經",
     "path": "T/T21/T21n1378a.xml",
     "rawUrl": "https://raw.githubusercontent.com/cbeta-org/xml-p5/master/T/T21/T21n1378a.xml",
-    "titleSimplified": "佛说玄师𩙥陀所说神呪经",
+    "titleSimplified": "佛说玄师颰陀所说神呪经",
     "canonTitleSimplified": "大正藏",
-    "searchText": "佛说玄师𩙥陀所说神呪经 大正藏 t21n1378a t t21 1378a t/t21/t21n1378a.xml"
+    "searchText": "佛说玄师颰陀所说神呪经 大正藏 t21n1378a t t21 1378a t/t21/t21n1378a.xml"
   },
   {
     "id": "T21n1378b",
@@ -34308,9 +34308,9 @@ export const cbetaCatalog = [
     "title": "幻師颰陀神呪經",
     "path": "T/T21/T21n1378b.xml",
     "rawUrl": "https://raw.githubusercontent.com/cbeta-org/xml-p5/master/T/T21/T21n1378b.xml",
-    "titleSimplified": "幻师𩙥陀神呪经",
+    "titleSimplified": "幻师颰陀神呪经",
     "canonTitleSimplified": "大正藏",
-    "searchText": "幻师𩙥陀神呪经 大正藏 t21n1378b t t21 1378b t/t21/t21n1378b.xml"
+    "searchText": "幻师颰陀神呪经 大正藏 t21n1378b t t21 1378b t/t21/t21n1378b.xml"
   },
   {
     "id": "T21n1379",
