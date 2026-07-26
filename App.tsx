@@ -101,7 +101,7 @@ function SutraReaderApp() {
   const [loadingMessage, setLoadingMessage] = useState<string>();
   const [readerOpenKey, setReaderOpenKey] = useState(0);
   const [readerReturnScreen, setReaderReturnScreen] = useState<Screen>("home");
-  const [chineseScript, setChineseScript] = useState<ChineseScript>("simplified");
+  const chineseScript: ChineseScript = "simplified";
   const [selectedCategory, setSelectedCategory] =
     useState<GlobalProgressCategoryGroup>();
   const [selectedCategorySegmentId, setSelectedCategorySegmentId] = useState<string>();
@@ -167,10 +167,27 @@ function SutraReaderApp() {
   };
 
   const openReaderAt = async (position: ReadingPosition, returnScreen: Screen = screen) => {
-    setLoadingMessage(`正在打开《${workTitle(currentWork, chineseScript)}》`);
+    let work = currentWork;
+    let nextPosition = position;
+    setLoadingMessage(`正在打开《${workTitle(work, chineseScript)}》`);
     await waitForLoadingPaint();
-    setCurrentPosition(position);
-    persist({ ...readerState, activeSessionStart: position, lastPosition: position });
+
+    try {
+      const refreshed = await refreshWorkForReaderIfNeeded(work, position);
+      if (refreshed) {
+        work = refreshed.work;
+        nextPosition = refreshed.position;
+        setCurrentWork(work);
+      }
+    } catch (error) {
+      setLoadingMessage(
+        error instanceof Error ? error.message : "无法载入这部 CBETA 文献",
+      );
+      return;
+    }
+
+    setCurrentPosition(nextPosition);
+    persist({ ...readerState, activeSessionStart: nextPosition, lastPosition: nextPosition });
     setReaderOpenKey((value) => value + 1);
     setReaderReturnScreen(returnScreen === "reader" ? "home" : returnScreen);
     setScreen("reader");
@@ -291,6 +308,22 @@ function SutraReaderApp() {
     setTimeout(() => setLoadingMessage(undefined), 120);
   };
 
+  const refreshWorkForReaderIfNeeded = async (
+    work: SutraWork,
+    position: ReadingPosition,
+  ) => {
+    const item = catalogItemForWork(work);
+    if (!item || !shouldUseApiReaderHtml(item) || hasReaderHtml(work)) {
+      return undefined;
+    }
+
+    const freshWork = await loadCbetaWork(item);
+    return {
+      work: freshWork,
+      position: positionForSavedPositionInWork(position, freshWork),
+    };
+  };
+
   const deleteBookmark = (bookmark: Bookmark) => {
     if (readerState.completionAnchor?.id === bookmark.id) {
       persist({
@@ -388,13 +421,6 @@ function SutraReaderApp() {
     openCatalogItem(nextCatalogItem, "reader", nextState);
   };
 
-  const toggleChineseScript = () => {
-    setChineseScript((value) =>
-      value === "simplified" ? "traditional" : "simplified",
-    );
-    setReaderOpenKey((value) => value + 1);
-  };
-
   const exportProgress = async () => {
     const fileName = `yuezang-progress-${new Date()
       .toISOString()
@@ -487,7 +513,6 @@ function SutraReaderApp() {
           onDeleteBookmark={deleteBookmark}
           onExportProgress={exportProgress}
           onImportProgress={importProgress}
-          onToggleChineseScript={toggleChineseScript}
         />
       ) : null}
       {screen === "category" && selectedCategory ? (
@@ -617,7 +642,6 @@ function HomeScreen({
   onDeleteBookmark,
   onExportProgress,
   onImportProgress,
-  onToggleChineseScript,
 }: {
   theme: Theme;
   currentWork: SutraWork;
@@ -634,7 +658,6 @@ function HomeScreen({
   onDeleteBookmark: (bookmark: Bookmark) => void;
   onExportProgress: () => void;
   onImportProgress: () => void;
-  onToggleChineseScript: () => void;
 }) {
   const activeBookmarks = readerState.bookmarks.filter(
     (bookmark) =>
@@ -703,15 +726,6 @@ function HomeScreen({
           text="导入"
           theme={theme}
           onPress={onImportProgress}
-        />
-        <CompactButton
-          label={
-            chineseScript === "simplified" ? "当前显示简体，轻点切换繁体" : "当前顯示繁體，輕點切換簡體"
-          }
-          text={chineseScript === "simplified" ? "简" : "繁"}
-          theme={theme}
-          filled
-          onPress={onToggleChineseScript}
         />
       </View>
 
@@ -1304,7 +1318,11 @@ function ReaderScreen({
     let cancelled = false;
     setReaderSource(undefined);
     const targetAnchorId = targetItem
-      ? readerAnchorId(targetItem, position.charOffset)
+      ? work.readerHtmlIsCompleteDocument
+        ? undefined
+        : work.readerHtml
+        ? targetItem.id
+        : readerAnchorId(targetItem, position.charOffset)
       : undefined;
     const sourceKey = `${work.id}-${chineseScript}-${restoreKey}-${targetAnchorId ?? "top"}`;
     const html = createReaderHtml({
@@ -1637,21 +1655,36 @@ function createReaderHtml({
   activeItemId?: string;
   nextWorkTitle?: string;
 }) {
-  const blocksHtml = readerItems
-    .map((item) => {
-      const title = item.title
-        ? `<div class="block-title">${escapeHtml(item.title)}</div>`
-        : "";
-      const selected = item.id === activeItemId ? " selected" : "";
-      return `<section class="reader-block${selected}" id="${escapeAttribute(
-        item.id,
-      )}" data-item-id="${escapeAttribute(item.id)}" data-block-id="${escapeAttribute(
-        item.block.id,
-      )}" data-char-start="${item.charStart}" data-char-end="${item.charEnd}">${title}<p>${readerTextWithAnchors(
-        item,
-      )}</p></section>`;
-    })
-    .join("");
+  if (work.readerHtmlIsCompleteDocument && work.readerHtml) {
+    return work.readerHtml;
+  }
+
+  const blocksHtml = work.readerHtml
+    ? work.readerHtml
+    : readerItems
+        .map((item) => {
+          const title = item.title
+            ? `<div class="block-title">${escapeHtml(item.title)}</div>`
+            : "";
+          const selected = item.id === activeItemId ? " selected" : "";
+          return `<section class="reader-block${selected}" id="${escapeAttribute(
+            item.id,
+          )}" data-item-id="${escapeAttribute(item.id)}" data-block-id="${escapeAttribute(
+            item.block.id,
+          )}" data-char-start="${item.charStart}" data-char-end="${item.charEnd}">${title}<p>${readerTextWithAnchors(
+            item,
+          )}</p></section>`;
+        })
+        .join("");
+  const readerMetadata = JSON.stringify(
+    readerItems.map((item) => ({
+      id: item.id,
+      blockId: item.block.id,
+      charStart: item.charStart,
+      charEnd: item.charEnd,
+    })),
+  );
+  const activeItem = JSON.stringify(activeItemId ?? "");
   const endPanel = `<section class="end-panel"><h2>已到本部末尾</h2><p>${
     nextWorkTitle ? `下一部：${escapeHtml(nextWorkTitle)}` : "已到经藏末尾"
   }</p>${nextWorkTitle ? `<button id="next-work">下一部</button>` : ""}</section>`;
@@ -1693,7 +1726,8 @@ function createReaderHtml({
     font-weight: 700;
     line-height: 1.45;
   }
-  p {
+  p,
+  .lg-row {
     margin: 0;
     color: ${theme.text};
     font-size: 24px;
@@ -1701,6 +1735,22 @@ function createReaderHtml({
     line-height: 1.75;
     letter-spacing: 0;
     word-break: break-word;
+  }
+  .lg-cell {
+    display: inline;
+    margin-right: 1.25em;
+  }
+  .lb,
+  .lineInfo,
+  .facsimile,
+  .noteAnchor,
+  #back,
+  #cbeta-copyright,
+  mulu {
+    display: none !important;
+  }
+  .pc {
+    display: inline;
   }
   .reader-anchor {
     scroll-margin-top: 14px;
@@ -1743,6 +1793,8 @@ ${blocksHtml}
 ${endPanel}
 <script>
 (() => {
+  const readerMetadata = ${readerMetadata};
+  const activeItemId = ${activeItem};
   const post = (payload) => {
     if (window.ReactNativeWebView) {
       window.ReactNativeWebView.postMessage(JSON.stringify(payload));
@@ -1758,6 +1810,37 @@ ${endPanel}
       node.classList.remove("selected");
     });
     block.classList.add("selected");
+  };
+  const initializeReaderBlocks = () => {
+    const candidates = Array.from(document.querySelectorAll("p, .lg-row")).filter((node) => {
+      return (node.textContent || "").trim().length >= 2;
+    });
+
+    readerMetadata.forEach((item, index) => {
+      const block = candidates[index];
+      if (!block) {
+        return;
+      }
+
+      block.classList.add("reader-block");
+      block.id = item.id;
+      block.dataset.itemId = item.id;
+      block.dataset.blockId = item.blockId;
+      block.dataset.charStart = String(item.charStart);
+      block.dataset.charEnd = String(item.charEnd);
+
+      if (item.id === activeItemId) {
+        block.classList.add("selected");
+      }
+    });
+
+    const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+    const target = hash ? document.getElementById(hash) : null;
+    if (target) {
+      window.setTimeout(() => {
+        target.scrollIntoView({ block: "start", inline: "nearest" });
+      }, 0);
+    }
   };
   const messageForBlock = (block, type) => {
     const rect = block.getBoundingClientRect();
@@ -1829,7 +1912,7 @@ ${endPanel}
 
     const blocks = Array.from(document.querySelectorAll(".reader-block"));
     for (const block of blocks) {
-      const text = block.querySelector("p")?.textContent || "";
+    const text = block.textContent || "";
       let index = text.indexOf(term);
       while (index >= 0) {
         searchMatches.push({ block, index });
@@ -1868,6 +1951,8 @@ ${endPanel}
     selectBlock(block);
     post(messageForBlock(block, "select"));
   });
+
+  initializeReaderBlocks();
 
   let ticking = false;
   window.addEventListener("scroll", () => {
@@ -2519,6 +2604,19 @@ function catalogIndexForWork(work: SutraWork) {
   }
 
   return undefined;
+}
+
+function catalogItemForWork(work: SutraWork) {
+  const index = catalogIndexForWork(work);
+  return index === undefined ? undefined : cbetaCatalog[index];
+}
+
+function shouldUseApiReaderHtml(item: CbetaCatalogItem) {
+  return item.canon === "T";
+}
+
+function hasReaderHtml(work: SutraWork) {
+  return Boolean(work.readerHtml);
 }
 
 function catalogItemForBookmark(bookmark: Bookmark) {
