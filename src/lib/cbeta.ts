@@ -31,7 +31,7 @@ const normalizeResidualDisplayGlyphs = (text: string) =>
 const preferredSourceKey = "sutrareader.cbetaPreferredSource.v1";
 const sourceTimeoutMs = 8000;
 const apiHtmlMaxJuans = 40;
-const cbetaParserVersion = 21;
+const cbetaParserVersion = 25;
 const cbetaApiBases = [
   "https://cbdata.dila.edu.tw/stable",
   "https://api.cbetaonline.cn/stable",
@@ -92,11 +92,7 @@ export const loadCbetaWork = async (item: CbetaCatalogItem): Promise<SutraWork> 
     }
   }
 
-  const work = await fetchCbetaApiHtmlWork(item).catch(async (error) => {
-    if (shouldPreferCbetaApiHtml(item) && !isCbetaApiSkippedError(error)) {
-      throw error;
-    }
-
+  const work = await fetchCbetaApiHtmlWork(item).catch(async () => {
     const xml = await fetchCbetaXml(item);
     return parseCbetaXml(item, xml);
   });
@@ -310,10 +306,6 @@ const shouldRefreshCachedWork = (work: SutraWork, item?: CbetaCatalogItem) => {
     return true;
   }
 
-  if (item && shouldPreferCbetaApiHtml(item) && !work.readerHtml) {
-    return true;
-  }
-
   const hasUnresolvedGaiji = work.blocks.some(
     (block) =>
       block.textSimplified.includes("�") ||
@@ -328,11 +320,6 @@ const shouldRefreshCachedWork = (work: SutraWork, item?: CbetaCatalogItem) => {
   const shortBlocks = work.blocks.filter((block) => block.textSimplified.length < 28).length;
   return work.blocks.length > 80 && shortBlocks / work.blocks.length > 0.35;
 };
-
-const shouldPreferCbetaApiHtml = (item: CbetaCatalogItem) => item.canon === "T";
-
-const isCbetaApiSkippedError = (error: unknown) =>
-  error instanceof Error && error.message.includes("CBETA API source skipped");
 
 const normalizeCachedWork = (work: SutraWork) => {
   let changed = false;
@@ -378,7 +365,7 @@ const parseCbetaApiHtml = (
     return currentSection;
   };
 
-  const addBlock = (source: string, sectionTitle: string) => {
+  const addBlock = (source: string, sectionTitle: string, anchorId?: string) => {
     const textSource = normalizeChineseText(
       normalizeResidualDisplayGlyphs(normalizeDisplayGlyphs(source)),
     );
@@ -392,7 +379,7 @@ const parseCbetaApiHtml = (
       id: blockId,
       workId: item.id,
       sectionId: section.id,
-      anchorId: `${item.id}-${blocks.length}`,
+      anchorId: anchorId ?? `${item.id}-${blocks.length}`,
       order: blocks.length,
       textSource,
       textSimplified: toSimplified(textSource),
@@ -413,8 +400,16 @@ const parseCbetaApiHtml = (
     const blockPattern =
       /<p\b([^>]*)>([\s\S]*?)<\/p>|<div\b([^>]*\bclass=(["'])lg-row\b[^>]*\4[^>]*)>([\s\S]*?)<\/div>/g;
     let match: RegExpExecArray | null;
+    let lastIndex = 0;
+    let lastAnchorId = readableHtml.match(/<span\b[^>]*\bclass=(["'])lb\b[^>]*\1[^>]*\bid=(["'])(.*?)\2/i)?.[3];
 
     while ((match = blockPattern.exec(readableHtml))) {
+      const between = readableHtml.slice(lastIndex, match.index);
+      const anchorId = lastCbetaLineId(between) ?? lastAnchorId;
+      if (anchorId) {
+        lastAnchorId = anchorId;
+      }
+
       const attrs = match[1] ?? match[3] ?? "";
       const body = match[2] ?? match[5] ?? "";
       const className = attrs.match(/\bclass=(["'])(.*?)\1/)?.[2] ?? "";
@@ -422,15 +417,17 @@ const parseCbetaApiHtml = (
 
       if (className.includes("head") || className.includes("juan")) {
         sectionTitle = normalizeChineseText(text) || sectionTitle;
-        addBlock(text, sectionTitle);
+        addBlock(text, sectionTitle, anchorId);
       } else if (className.includes("byline")) {
-        addBlock(text, sectionTitle);
+        addBlock(text, sectionTitle, anchorId);
       } else {
-        addBlock(text, sectionTitle || `${item.title} 第${juan}卷`);
+        addBlock(text, sectionTitle || `${item.title} 第${juan}卷`, anchorId);
       }
+
+      lastIndex = blockPattern.lastIndex;
     }
 
-    readerHtmlParts.push(prepareCbetaApiReaderHtml(html));
+    readerHtmlParts.push(extractCbetaApiBody(html));
   });
 
   if (!blocks.length) {
@@ -448,20 +445,44 @@ const parseCbetaApiHtml = (
     sourceUrl: `https://cbdata.dila.edu.tw/stable/juans?work=${apiWorkIdFor(item)}`,
     sourceAttribution:
       "Text source: CBETA API HTML for UI / CBETA XML P5. Please keep CBETA attribution and source availability notes with redistributed text.",
-    readerHtml: readerHtmlParts.join("\n"),
+    readerHtml: combineCbetaApiReaderHtml(readerHtmlParts, workInfo.title ?? item.title),
     readerHtmlIsCompleteDocument: true,
     sections: sections.filter((section) => section.blockIds.length > 0),
     blocks,
   };
 };
 
-const prepareCbetaApiReaderHtml = (html: string) =>
-  html.replace(
-    /<head>/i,
-    '<head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />',
-  ).replace(
-    /<\/head>/i,
-    `<style>
+const combineCbetaApiReaderHtml = (bodyParts: string[], title: string) =>
+  `<!doctype html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>${escapeHtml(title)}</title>
+${cbetaApiReaderStyle()}
+</head>
+<body>
+${bodyParts.join("\n")}
+</body>
+</html>`;
+
+const extractCbetaApiBody = (html: string) =>
+  html.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? html;
+
+const lastCbetaLineId = (html: string) => {
+  const pattern = /<span\b[^>]*\bclass=(["'])lb\b[^>]*\1[^>]*\bid=(["'])(.*?)\2/gi;
+  let match: RegExpExecArray | null;
+  let id: string | undefined;
+
+  while ((match = pattern.exec(html))) {
+    id = match[3];
+  }
+
+  return id;
+};
+
+const cbetaApiReaderStyle = () =>
+  `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <style>
       html {
         -webkit-text-size-adjust: 100% !important;
       }
@@ -481,7 +502,16 @@ const prepareCbetaApiReaderHtml = (html: string) =>
         font-size: 24px !important;
         line-height: 1.75 !important;
       }
-      .lb,
+      .lb {
+        position: relative !important;
+        display: inline !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+        color: transparent !important;
+        font-size: 0 !important;
+        line-height: 0 !important;
+      }
       .lineInfo,
       .facsimile,
       .noteAnchor,
@@ -489,8 +519,15 @@ const prepareCbetaApiReaderHtml = (html: string) =>
       #cbeta-copyright {
         display: none !important;
       }
-    </style></head>`,
-  );
+      .reader-selected {
+        background: rgba(142, 96, 61, 0.18) !important;
+        border-radius: 8px;
+      }
+      .search-hit {
+        background: rgba(142, 96, 61, 0.24) !important;
+        border-radius: 4px;
+      }
+    </style>`;
 
 type HtmlGaiji = {
   normalized?: string;
