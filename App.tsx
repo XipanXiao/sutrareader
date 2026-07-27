@@ -1701,6 +1701,11 @@ function createReaderHtml({
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <style>
+  @font-face {
+    font-family: "cbetarc";
+    src: url("https://cbetaonline.dila.edu.tw/fonts/cbetarc.woff2") format("woff2");
+    font-display: swap;
+  }
   :root {
     color-scheme: light dark;
     background: ${theme.background};
@@ -1714,7 +1719,7 @@ function createReaderHtml({
     padding: 8px 26px 34px;
     background: ${theme.background};
     color: ${theme.text};
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-family: cbetarc, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Hanazono Mincho C", "Hanazono Mincho B", "Hanazono Mincho A", sans-serif;
     -webkit-text-size-adjust: 100%;
   }
   .reader-block {

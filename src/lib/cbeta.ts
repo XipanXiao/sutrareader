@@ -5,29 +5,7 @@ import { CbetaCatalogItem, SutraSection, SutraWork, TextBlock } from "../types";
 
 const cacheDirectory = `${FileSystem.documentDirectory ?? ""}cbeta-cache`;
 const convertToSimplified = Converter({ from: "tw", to: "cn" });
-const toSimplified = (text: string) =>
-  normalizeResidualDisplayGlyphs(convertToSimplifiedSafely(normalizeDisplayGlyphs(text)));
-const convertToSimplifiedSafely = (text: string) => {
-  const converted = convertToSimplified(text);
-  const sourceChars = Array.from(text);
-  const convertedChars = Array.from(converted);
-
-  if (sourceChars.length !== convertedChars.length) {
-    return converted;
-  }
-
-  return convertedChars
-    .map((char, index) =>
-      containsDisplayRiskGlyph(char) && !containsDisplayRiskGlyph(sourceChars[index])
-        ? sourceChars[index]
-        : char,
-    )
-    .join("");
-};
-const normalizeDisplayGlyphs = (text: string) =>
-  text.replace(/CBETA CHARACTER CB\d+[a-z]?/g, "□");
-const normalizeResidualDisplayGlyphs = (text: string) =>
-  text.replace(/[\uE000-\uF8FF\u{20000}-\u{3FFFF}\u{F0000}-\u{10FFFF}]/gu, "□");
+const toSimplified = (text: string) => convertToSimplified(text);
 const preferredSourceKey = "sutrareader.cbetaPreferredSource.v1";
 const sourceTimeoutMs = 8000;
 const apiHtmlMaxJuans = 40;
@@ -366,9 +344,7 @@ const parseCbetaApiHtml = (
   };
 
   const addBlock = (source: string, sectionTitle: string, anchorId?: string) => {
-    const textSource = normalizeChineseText(
-      normalizeResidualDisplayGlyphs(normalizeDisplayGlyphs(source)),
-    );
+    const textSource = normalizeChineseText(source);
     if (!textSource || textSource.length < 2) {
       return;
     }
@@ -483,11 +459,16 @@ const lastCbetaLineId = (html: string) => {
 const cbetaApiReaderStyle = () =>
   `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <style>
+      @font-face {
+        font-family: "cbetarc";
+        src: url("https://cbetaonline.dila.edu.tw/fonts/cbetarc.woff2") format("woff2");
+        font-display: swap;
+      }
       html {
         -webkit-text-size-adjust: 100% !important;
       }
       body {
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        font-family: cbetarc, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Hanazono Mincho C", "Hanazono Mincho B", "Hanazono Mincho A", sans-serif;
         font-size: 24px !important;
         line-height: 1.75 !important;
         padding: 8px 24px 36px !important;
@@ -560,23 +541,20 @@ const extractHtmlGaijiMap = (html: string) => {
 const htmlAttr = (attrs: string, name: string) =>
   attrs.match(new RegExp(`\\b${name}=(["'])(.*?)\\1`))?.[2];
 
-const displayGaiji = (gaiji: HtmlGaiji | undefined, fallback: string) => {
+const displayGaiji = (gaiji: HtmlGaiji | undefined, fallback: string): string => {
   if (gaiji?.normalized) {
     return gaiji.normalized;
   }
 
-  const visible = normalizeDisplayGlyphs(stripHtml(fallback));
-  if (visible && !containsDisplayRiskGlyph(visible)) {
+  const visible = stripHtml(fallback);
+  if (visible) {
     return visible;
   }
 
   return gaiji?.composition ?? "□";
 };
 
-const containsDisplayRiskGlyph = (text: string) =>
-  /[\uE000-\uF8FF\u{20000}-\u{3FFFF}\u{F0000}-\u{10FFFF}]/u.test(text);
-
-const stripHtml = (html: string, gaijiMap = new Map<string, HtmlGaiji>()) =>
+const stripHtml = (html: string, gaijiMap = new Map<string, HtmlGaiji>()): string =>
   decodeXml(
     html
       .replace(/<div\b[^>]*id=(["'])back\1[\s\S]*?<\/div>/g, "")
@@ -878,7 +856,7 @@ const splitIntoBlocks = (
 
     const section = ensureSection();
 
-    const textSource = normalizeResidualDisplayGlyphs(normalizeDisplayGlyphs(source));
+    const textSource = source;
     const block: TextBlock = {
       id: `${item.id}-block-${blocks.length}`,
       workId: item.id,
