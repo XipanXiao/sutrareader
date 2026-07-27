@@ -70,6 +70,8 @@ type GlobalProgressCategoryGroup = {
 
 const makeId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const toTraditional = Converter({ from: "cn", to: "tw" });
+const cbetaFontFamily = "cbetarc";
+const cbetaFontUrl = "https://cbetaonline.dila.edu.tw/fonts/cbetarc.woff2";
 const completedThreshold = 0.999;
 const defaultCatalogItem =
   cbetaCatalog.find((item) => item.id === "T01n0001") ?? cbetaCatalog[0];
@@ -1483,6 +1485,7 @@ function ReaderScreen({
           title={workTitle(work, chineseScript)}
           onBack={onBack}
           rightAction={readerRightAction}
+          renderTitleInWebView
         />
         {searchOpen ? (
           <ReaderSearchBar
@@ -1518,6 +1521,7 @@ function ReaderScreen({
         title={workTitle(work, chineseScript)}
         onBack={onBack}
         rightAction={readerRightAction}
+        renderTitleInWebView
       />
       {searchOpen ? (
         <ReaderSearchBar
@@ -2468,24 +2472,72 @@ function TopBar({
   title,
   onBack,
   rightAction,
+  renderTitleInWebView = false,
 }: {
   theme: Theme;
   title: string;
   onBack: () => void;
   rightAction?: React.ReactNode;
+  renderTitleInWebView?: boolean;
 }) {
   return (
     <View style={styles.topBar}>
       <Pressable onPress={onBack} style={styles.backButton}>
         <Text style={[styles.backText, { color: theme.accent }]}>返回</Text>
       </Pressable>
-      <Text style={[styles.topTitle, { color: theme.text }]} numberOfLines={1}>
-        {title}
-      </Text>
+      {renderTitleInWebView ? (
+        <WebView
+          originWhitelist={["*"]}
+          source={{ html: topBarTitleHtml(title, theme) }}
+          style={[styles.topTitleWebView, { backgroundColor: theme.background }]}
+          scrollEnabled={false}
+          showsHorizontalScrollIndicator={false}
+          showsVerticalScrollIndicator={false}
+        />
+      ) : (
+        <Text style={[styles.topTitle, { color: theme.text }]} numberOfLines={1}>
+          {title}
+        </Text>
+      )}
       <View style={styles.topRightSlot}>{rightAction}</View>
     </View>
   );
 }
+
+const topBarTitleHtml = (title: string, theme: Theme) => `<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+@font-face {
+  font-family: "${cbetaFontFamily}";
+  src: url("${cbetaFontUrl}") format("woff2");
+  font-display: swap;
+}
+html,
+body {
+  background: ${theme.background};
+  color: ${theme.text};
+  font-family: ${cbetaFontFamily}, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Hanazono Mincho C", "Hanazono Mincho B", "Hanazono Mincho A", sans-serif;
+  font-size: 18px;
+  font-weight: 400;
+  height: 44px;
+  line-height: 44px;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  text-align: center;
+  -webkit-text-size-adjust: 100%;
+}
+.title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>
+</head>
+<body><div class="title">${escapeHtml(title)}</div></body>
+</html>`;
 
 function WorkProgressBadge({
   theme,
@@ -3014,13 +3066,9 @@ function catalogCanonTitle(item: CbetaCatalogItem, chineseScript: ChineseScript)
 }
 
 function workTitle(work: SutraWork, chineseScript: ChineseScript) {
-  if (chineseScript === "simplified") {
-    return work.title;
-  }
-
   const index = catalogIndexForWork(work);
   const catalogItem = index === undefined ? undefined : cbetaCatalog[index];
-  return catalogItem?.title ?? displayText(work.title, chineseScript);
+  return catalogItem ? catalogTitle(catalogItem, chineseScript) : displayText(work.title, chineseScript);
 }
 
 function formatPercent(value: number) {
@@ -3064,7 +3112,7 @@ function createBookmark(
     id: makeId(),
     workId: work.id,
     position,
-    title: `${work.title} - ${section?.title ?? work.subtitle}`,
+    title: `${workTitle(work, "simplified")} - ${section?.title ?? work.subtitle}`,
     isPrimaryForWork: primary,
     createdAt: now,
     updatedAt: now,
@@ -3576,6 +3624,10 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     textAlign: "center",
+  },
+  topTitleWebView: {
+    flex: 1,
+    height: 44,
   },
   topRightSlot: {
     alignItems: "flex-end",

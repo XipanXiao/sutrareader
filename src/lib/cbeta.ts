@@ -412,7 +412,7 @@ const parseCbetaApiHtml = (
 
   return {
     id: item.id,
-    title: toSimplified(workInfo.title ?? item.title),
+    title: item.titleSimplified ?? toSimplified(workInfo.title ?? item.title),
     subtitle: [item.canonTitle, item.sourceId, toSimplified(workInfo.byline ?? "")]
       .filter(Boolean)
       .join(" - "),
@@ -933,7 +933,7 @@ export const parseCbetaXml = (item: CbetaCatalogItem, xml: string): SutraWork =>
 
   return {
     id: item.id,
-    title: toSimplified(title),
+    title: item.titleSimplified ?? toSimplified(title),
     subtitle: [item.canonTitle, item.sourceId, toSimplified(author), extent]
       .filter(Boolean)
       .join(" - "),
