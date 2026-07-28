@@ -363,6 +363,7 @@ const extractGaijiMap = (xml: string) => {
     const value =
       normalizedFormMapping(body) ??
       unicodeMapping(body) ??
+      compositionMapping(body) ??
       firstTagText(body, "mapping");
     if (value) {
       map.set(id, value);
@@ -403,6 +404,23 @@ const unicodeMapping = (xml: string) => {
   }
 
   return String.fromCodePoint(codePoint);
+};
+
+const compositionMapping = (xml: string) => {
+  const charPropPattern = /<charProp\b[^>]*>([\s\S]*?)<\/charProp>/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = charPropPattern.exec(xml))) {
+    const body = match[1];
+    const localName = firstTagText(body, "localName");
+    if (localName !== "composition") {
+      continue;
+    }
+
+    return firstTagText(body, "value");
+  }
+
+  return undefined;
 };
 
 const firstTagText = (xml: string, tag: string) => {
