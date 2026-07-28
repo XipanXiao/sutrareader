@@ -69,7 +69,7 @@ type GlobalProgressCategoryGroup = {
 };
 
 const makeId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-const toTraditional = Converter({ from: "cn", to: "tw" });
+const convertToSimplified = Converter({ from: "tw", to: "cn" });
 const cbetaFontFamily = "cbetarc";
 const cbetaFontUrl = "https://cbetaonline.dila.edu.tw/fonts/cbetarc.woff2";
 const completedThreshold = 0.999;
@@ -103,7 +103,7 @@ function SutraReaderApp() {
   const [loadingMessage, setLoadingMessage] = useState<string>();
   const [readerOpenKey, setReaderOpenKey] = useState(0);
   const [readerReturnScreen, setReaderReturnScreen] = useState<Screen>("home");
-  const chineseScript: ChineseScript = "simplified";
+  const [chineseScript, setChineseScript] = useState<ChineseScript>("traditional");
   const [selectedCategory, setSelectedCategory] =
     useState<GlobalProgressCategoryGroup>();
   const [selectedCategorySegmentId, setSelectedCategorySegmentId] = useState<string>();
@@ -515,6 +515,11 @@ function SutraReaderApp() {
           onDeleteBookmark={deleteBookmark}
           onExportProgress={exportProgress}
           onImportProgress={importProgress}
+          onToggleChineseScript={() =>
+            setChineseScript((value) =>
+              value === "simplified" ? "traditional" : "simplified",
+            )
+          }
         />
       ) : null}
       {screen === "category" && selectedCategory ? (
@@ -644,6 +649,7 @@ function HomeScreen({
   onDeleteBookmark,
   onExportProgress,
   onImportProgress,
+  onToggleChineseScript,
 }: {
   theme: Theme;
   currentWork: SutraWork;
@@ -660,6 +666,7 @@ function HomeScreen({
   onDeleteBookmark: (bookmark: Bookmark) => void;
   onExportProgress: () => void;
   onImportProgress: () => void;
+  onToggleChineseScript: () => void;
 }) {
   const activeBookmarks = readerState.bookmarks.filter(
     (bookmark) =>
@@ -728,6 +735,13 @@ function HomeScreen({
           text="导入"
           theme={theme}
           onPress={onImportProgress}
+        />
+        <CompactButton
+          label="切换简繁显示"
+          text={chineseScript === "simplified" ? "简体" : "繁體"}
+          theme={theme}
+          filled={chineseScript === "simplified"}
+          onPress={onToggleChineseScript}
         />
       </View>
 
@@ -1319,8 +1333,9 @@ function ReaderScreen({
   useEffect(() => {
     let cancelled = false;
     setReaderSource(undefined);
+    const useOriginalReaderHtml = chineseScript === "traditional" && Boolean(work.readerHtml);
     const targetAnchorId = targetItem
-      ? work.readerHtml
+      ? useOriginalReaderHtml
         ? targetItem.id
         : readerAnchorId(targetItem, position.charOffset)
       : undefined;
@@ -1328,6 +1343,7 @@ function ReaderScreen({
     const html = createReaderHtml({
       theme,
       work,
+      chineseScript,
       readerItems,
       activeItemId,
       nextWorkTitle,
@@ -1603,14 +1619,16 @@ function ProgressDot({
 
 function createReaderTextItems(work: SutraWork, chineseScript: ChineseScript): ReaderTextItem[] {
   return work.blocks.map((block) => {
-    const text = chineseScript === "traditional" ? block.textSource : block.textSimplified;
+    const simplified = chineseScript === "simplified";
+    const originalContent = block.textSource;
+    const content = simplified ? convertToSimplified(originalContent) : originalContent;
 
     return {
       id: block.id,
       block,
-      text,
+      text: content,
       charStart: 0,
-      charEnd: text.length,
+      charEnd: content.length,
       title: block.title ? displayText(block.title, chineseScript) : undefined,
     };
   });
@@ -1647,33 +1665,38 @@ function readerAnchorId(item: ReaderTextItem, charOffset: number) {
 function createReaderHtml({
   theme,
   work,
+  chineseScript,
   readerItems,
   activeItemId,
   nextWorkTitle,
 }: {
   theme: Theme;
   work: SutraWork;
+  chineseScript: ChineseScript;
   readerItems: ReaderTextItem[];
   activeItemId?: string;
   nextWorkTitle?: string;
 }) {
-  const blocksHtml = work.readerHtml
-    ? work.readerHtml
-    : readerItems
-        .map((item) => {
-          const title = item.title
-            ? `<div class="block-title">${escapeHtml(item.title)}</div>`
-            : "";
-          const selected = item.id === activeItemId ? " selected" : "";
-          return `<section class="reader-block${selected}" id="${escapeAttribute(
-            item.id,
-          )}" data-item-id="${escapeAttribute(item.id)}" data-block-id="${escapeAttribute(
-            item.block.id,
-          )}" data-char-start="${item.charStart}" data-char-end="${item.charEnd}">${title}<p>${readerTextWithAnchors(
-            item,
-          )}</p></section>`;
-        })
-        .join("");
+  const simplified = chineseScript === "simplified";
+  const originalContent = work.readerHtml;
+  const blocksHtml =
+    !simplified && originalContent
+      ? originalContent
+      : readerItems
+          .map((item) => {
+            const title = item.title
+              ? `<div class="block-title">${escapeHtml(item.title)}</div>`
+              : "";
+            const selected = item.id === activeItemId ? " selected" : "";
+            return `<section class="reader-block${selected}" id="${escapeAttribute(
+              item.id,
+            )}" data-item-id="${escapeAttribute(item.id)}" data-block-id="${escapeAttribute(
+              item.block.id,
+            )}" data-char-start="${item.charStart}" data-char-end="${item.charEnd}">${title}<p>${readerTextWithAnchors(
+              item,
+            )}</p></section>`;
+          })
+          .join("");
   const readerMetadata = JSON.stringify(
     readerItems.map((item) => ({
       id: item.id,
@@ -2781,17 +2804,22 @@ function displayText(value: string | undefined, chineseScript: ChineseScript) {
     return "";
   }
 
-  return chineseScript === "traditional" ? toTraditional(value) : value;
+  const simplified = chineseScript === "simplified";
+  const originalContent = value;
+  const content = simplified ? convertToSimplified(originalContent) : originalContent;
+  return content;
 }
 
 function catalogTitle(item: CbetaCatalogItem, chineseScript: ChineseScript) {
-  return chineseScript === "traditional" ? item.title : item.titleSimplified ?? item.title;
+  return chineseScript === "traditional"
+    ? item.title
+    : item.titleSimplified ?? convertToSimplified(item.title);
 }
 
 function catalogCanonTitle(item: CbetaCatalogItem, chineseScript: ChineseScript) {
   return chineseScript === "traditional"
     ? item.canonTitle
-    : item.canonTitleSimplified ?? item.canonTitle;
+    : item.canonTitleSimplified ?? convertToSimplified(item.canonTitle);
 }
 
 function workTitle(work: SutraWork, chineseScript: ChineseScript) {
@@ -3244,6 +3272,7 @@ const styles = StyleSheet.create({
   actionRow: {
     alignItems: "center",
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     marginTop: 22,
   },
