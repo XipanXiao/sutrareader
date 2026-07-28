@@ -8,7 +8,7 @@ const convertToSimplified = Converter({ from: "tw", to: "cn" });
 const toSimplified = (text: string) => convertToSimplified(text);
 const preferredSourceKey = "sutrareader.cbetaPreferredSource.v1";
 const sourceTimeoutMs = 8000;
-const cbetaParserVersion = 26;
+const cbetaParserVersion = 27;
 const cbetaSourceTemplates = [
   {
     id: "github",
@@ -65,7 +65,7 @@ export const loadCbetaWork = async (item: CbetaCatalogItem): Promise<SutraWork> 
     }
   }
 
-  const xml = await fetchCbetaXml(item);
+  const xml = normalizeXmlSourceFormatting(await fetchCbetaXml(item));
   const work = parseCbetaXml(item, xml);
   await FileSystem.writeAsStringAsync(cachePath, JSON.stringify(work));
   return work;
@@ -92,6 +92,8 @@ const fetchCbetaXml = async (item: CbetaCatalogItem) => {
       : `无法从 CBETA 下载 ${item.sourceId}`,
   );
 };
+
+const normalizeXmlSourceFormatting = (xml: string) => xml.replace(/[\r\n]+/g, "");
 
 const sourceRaceBatches = (preferredSource: string | null) => {
   const preferred = cbetaSourceTemplates.find((source) => source.id === preferredSource);
