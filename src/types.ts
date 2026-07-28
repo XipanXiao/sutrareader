@@ -26,7 +26,6 @@ export type SutraWork = {
   sourceUrl?: string;
   sourceAttribution?: string;
   readerHtml?: string;
-  readerHtmlIsCompleteDocument?: boolean;
   sections: SutraSection[];
   blocks: TextBlock[];
 };
