@@ -21,7 +21,11 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { WebView, WebViewMessageEvent } from "react-native-webview";
 import { cbetaCatalog } from "./src/data/cbetaCatalog";
 import { sampleSutra } from "./src/data/sampleSutra";
-import { isCbetaWorkCached, loadCbetaWork } from "./src/lib/cbeta";
+import {
+  isCbetaWorkCached,
+  loadCbetaWork,
+  preserveRareGlyphConversions,
+} from "./src/lib/cbeta";
 import {
   createReadRange,
   makePosition,
@@ -69,7 +73,9 @@ type GlobalProgressCategoryGroup = {
 };
 
 const makeId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-const convertToSimplified = Converter({ from: "tw", to: "cn" });
+const convertToSimplifiedRaw = Converter({ from: "tw", to: "cn" });
+const convertToSimplified = (text: string) =>
+  preserveRareGlyphConversions(text, convertToSimplifiedRaw(text));
 const cbetaFontFamily = "cbetarc";
 const cbetaFontUrl = "https://cbetaonline.dila.edu.tw/fonts/cbetarc.woff2";
 const completedThreshold = 0.999;

@@ -5,10 +5,10 @@ import { CbetaCatalogItem, SutraSection, SutraWork, TextBlock } from "../types";
 
 const cacheDirectory = `${FileSystem.documentDirectory ?? ""}cbeta-cache`;
 const convertToSimplified = Converter({ from: "tw", to: "cn" });
-const toSimplified = (text: string) => convertToSimplified(text);
+const toSimplified = (text: string) => preserveRareGlyphConversions(text, convertToSimplified(text));
 const preferredSourceKey = "sutrareader.cbetaPreferredSource.v1";
 const sourceTimeoutMs = 8000;
-const cbetaParserVersion = 27;
+const cbetaParserVersion = 28;
 const cbetaSourceTemplates = [
   {
     id: "github",
@@ -93,7 +93,34 @@ const fetchCbetaXml = async (item: CbetaCatalogItem) => {
   );
 };
 
-const normalizeXmlSourceFormatting = (xml: string) => xml.replace(/[\r\n]+/g, "");
+const normalizeXmlSourceFormatting = (xml: string) =>
+  xml.replace(/[\r\n\t]+/g, "");
+
+export const preserveRareGlyphConversions = (source: string, converted: string) => {
+  const sourceChars = Array.from(source);
+  const convertedChars = Array.from(converted);
+  if (sourceChars.length !== convertedChars.length) {
+    return converted;
+  }
+
+  return convertedChars
+    .map((char, index) =>
+      shouldPreserveSourceGlyph(sourceChars[index], char) ? sourceChars[index] : char,
+    )
+    .join("");
+};
+
+const shouldPreserveSourceGlyph = (source: string, converted: string) =>
+  source !== converted &&
+  isCjkCharacter(source) &&
+  isCjkSupplementaryCharacter(converted);
+
+const isCjkCharacter = (char: string) => /\p{Script=Han}/u.test(char);
+
+const isCjkSupplementaryCharacter = (char: string) => {
+  const codePoint = char.codePointAt(0) ?? 0;
+  return codePoint > 0xffff && /\p{Script=Han}/u.test(char);
+};
 
 const sourceRaceBatches = (preferredSource: string | null) => {
   const preferred = cbetaSourceTemplates.find((source) => source.id === preferredSource);
