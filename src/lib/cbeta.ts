@@ -1,14 +1,15 @@
 import * as FileSystem from "expo-file-system/legacy";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Converter } from "opencc-js";
-import { CbetaCatalogItem, SutraSection, SutraWork, TextBlock } from "../types";
+import { CbetaCatalogItem, ReadingPosition, SutraSection, SutraWork, TextBlock } from "../types";
 
 const cacheDirectory = `${FileSystem.documentDirectory ?? ""}cbeta-cache`;
 const convertToSimplified = Converter({ from: "tw", to: "cn" });
 const toSimplified = (text: string) => preserveRareGlyphConversions(text, convertToSimplified(text));
 const preferredSourceKey = "sutrareader.cbetaPreferredSource.v1";
 const sourceTimeoutMs = 8000;
-const cbetaParserVersion = 28;
+const cbetaParserVersion = 29;
+const juanProgressUnit = 10000;
 const cbetaSourceTemplates = [
   {
     id: "github",
@@ -39,17 +40,35 @@ const ensureCacheDirectory = async () => {
   }
 };
 
-const cachePathFor = (item: CbetaCatalogItem) =>
-  `${cacheDirectory}/${item.path.replace(/\//g, "__")}.json`;
+export type CbetaLoadOptions = {
+  juan?: number;
+  positionHint?: ReadingPosition;
+};
+
+const cachePathFor = (item: CbetaCatalogItem, options: CbetaLoadOptions = {}) =>
+  `${cacheDirectory}/${item.path.replace(/\//g, "__")}${cacheSuffixForOptions(options)}.json`;
+
+const cacheSuffixForOptions = (options: CbetaLoadOptions) => {
+  const juan = options.juan ?? juanFromPositionHint(options.positionHint);
+  if (juan) {
+    return `__juan-${juan}`;
+  }
+
+  const legacyBlockOrder = legacyBlockOrderFromPositionHint(options.positionHint);
+  return legacyBlockOrder === undefined ? "" : `__legacy-${legacyBlockOrder}`;
+};
 
 export const isCbetaWorkCached = async (item: CbetaCatalogItem) => {
   await ensureCacheDirectory();
   return FileSystem.getInfoAsync(cachePathFor(item)).then((info) => info.exists);
 };
 
-export const loadCbetaWork = async (item: CbetaCatalogItem): Promise<SutraWork> => {
+export const loadCbetaWork = async (
+  item: CbetaCatalogItem,
+  options: CbetaLoadOptions = {},
+): Promise<SutraWork> => {
   await ensureCacheDirectory();
-  const cachePath = cachePathFor(item);
+  const cachePath = cachePathFor(item, options);
   const cached = await FileSystem.getInfoAsync(cachePath);
 
   if (cached.exists) {
@@ -66,7 +85,7 @@ export const loadCbetaWork = async (item: CbetaCatalogItem): Promise<SutraWork> 
   }
 
   const xml = normalizeXmlSourceFormatting(await fetchCbetaXml(item));
-  const work = parseCbetaXml(item, xml);
+  const work = parseCbetaXml(item, xml, options);
   await FileSystem.writeAsStringAsync(cachePath, JSON.stringify(work));
   return work;
 };
@@ -95,6 +114,25 @@ const fetchCbetaXml = async (item: CbetaCatalogItem) => {
 
 const normalizeXmlSourceFormatting = (xml: string) =>
   xml.replace(/[\r\n\t]+/g, "");
+
+const juanFromPositionHint = (position: ReadingPosition | undefined) => {
+  const anchorMatch = position?.anchorId.match(/(?:^|-)juan-(\d+)(?:-|$)/);
+  if (anchorMatch) {
+    return Number.parseInt(anchorMatch[1], 10);
+  }
+
+  const blockMatch = position?.textBlockId.match(/(?:^|-)juan-(\d+)(?:-|$)/);
+  return blockMatch ? Number.parseInt(blockMatch[1], 10) : undefined;
+};
+
+const legacyBlockOrderFromPositionHint = (position: ReadingPosition | undefined) => {
+  if (!position || /(?:^|-)juan-\d+(?:-|$)/.test(position.textBlockId)) {
+    return undefined;
+  }
+
+  const match = position.textBlockId.match(/-block-(\d+)$/);
+  return match ? Number.parseInt(match[1], 10) : undefined;
+};
 
 export const preserveRareGlyphConversions = (source: string, converted: string) => {
   const sourceChars = Array.from(source);
@@ -506,6 +544,7 @@ const splitIntoBlocks = (
   title: string,
   bodyXml: string,
   gaijiMap: Map<string, string>,
+  currentJuan?: number,
 ) => {
   const sections: SutraSection[] = [];
   const blocks: TextBlock[] = [];
@@ -550,11 +589,12 @@ const splitIntoBlocks = (
     const section = ensureSection();
 
     const textSource = source;
+    const blockPrefix = currentJuan ? `${item.id}-juan-${currentJuan}` : item.id;
     const block: TextBlock = {
-      id: `${item.id}-block-${blocks.length}`,
+      id: `${blockPrefix}-block-${blocks.length}`,
       workId: item.id,
       sectionId: section.id,
-      anchorId: `${item.id}-${order}`,
+      anchorId: `${blockPrefix}-${order}`,
       order,
       textSource,
       textSimplified: toSimplified(textSource),
@@ -615,21 +655,161 @@ const splitIntoBlocks = (
   };
 };
 
-export const parseCbetaXml = (item: CbetaCatalogItem, xml: string): SutraWork => {
+const juanRangeForCatalogItem = (item: CbetaCatalogItem, bodyXml: string) => {
+  const titleRange = item.title.match(/第\s*(\d+)\s*卷\s*[-－—]\s*第?\s*(\d+)\s*卷/);
+  if (titleRange) {
+    const start = Number.parseInt(titleRange[1], 10);
+    const end = Number.parseInt(titleRange[2], 10);
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      return { start: Math.min(start, end), end: Math.max(start, end) };
+    }
+  }
+
+  const milestones = Array.from(bodyXml.matchAll(/<milestone\b(?=[^>]*unit="juan")(?=[^>]*\bn="(\d+)")[^>]*\/>/g))
+    .map((match) => Number.parseInt(match[1], 10))
+    .filter(Number.isFinite);
+  if (!milestones.length) {
+    return undefined;
+  }
+
+  return {
+    start: Math.min(...milestones),
+    end: Math.max(...milestones),
+  };
+};
+
+const safeJuanForOptions = (
+  options: CbetaLoadOptions,
+  range: { start: number; end: number } | undefined,
+  bodyXml: string,
+  title: string,
+  gaijiMap: Map<string, string>,
+  item: CbetaCatalogItem,
+) => {
+  if (!range) {
+    return undefined;
+  }
+
+  const legacyJuan = legacyJuanForPositionHint(options.positionHint, range, bodyXml, title, gaijiMap, item);
+  const requested = options.juan ?? juanFromPositionHint(options.positionHint) ?? legacyJuan ?? range.start;
+  return Math.max(range.start, Math.min(requested, range.end));
+};
+
+const legacyJuanForPositionHint = (
+  position: ReadingPosition | undefined,
+  range: { start: number; end: number },
+  bodyXml: string,
+  title: string,
+  gaijiMap: Map<string, string>,
+  item: CbetaCatalogItem,
+) => {
+  const targetOrder = legacyBlockOrderFromPositionHint(position);
+  if (targetOrder === undefined) {
+    return undefined;
+  }
+
+  let blockCursor = 0;
+  for (let juan = range.start; juan <= range.end; juan += 1) {
+    const slicedBodyXml = sliceBodyXmlByJuan(bodyXml, juan);
+    const { blocks } = splitIntoBlocks(item, title, slicedBodyXml, gaijiMap, juan);
+    if (targetOrder < blockCursor + blocks.length) {
+      return juan;
+    }
+    blockCursor += blocks.length;
+  }
+
+  return undefined;
+};
+
+const legacyBlockOrderStartForJuan = (
+  juan: number | undefined,
+  range: { start: number; end: number } | undefined,
+  bodyXml: string,
+  title: string,
+  gaijiMap: Map<string, string>,
+  item: CbetaCatalogItem,
+) => {
+  if (!juan || !range || juan <= range.start) {
+    return 0;
+  }
+
+  let blockCursor = 0;
+  for (let current = range.start; current < juan; current += 1) {
+    const slicedBodyXml = sliceBodyXmlByJuan(bodyXml, current);
+    const { blocks } = splitIntoBlocks(item, title, slicedBodyXml, gaijiMap, current);
+    blockCursor += blocks.length;
+  }
+
+  return blockCursor;
+};
+
+const sliceBodyXmlByJuan = (bodyXml: string, juan: number) => {
+  const milestones = Array.from(
+    bodyXml.matchAll(/<milestone\b(?=[^>]*unit="juan")(?=[^>]*\bn="(\d+)")[^>]*\/>/g),
+  ).map((match) => ({
+    juan: Number.parseInt(match[1], 10),
+    index: match.index ?? 0,
+  }));
+  const current = milestones.find((item) => item.juan === juan);
+  if (!current) {
+    return bodyXml;
+  }
+
+  const next = milestones.find((item) => item.index > current.index);
+  const bodyOpen = bodyXml.match(/^<body\b[^>]*>/)?.[0] ?? "<body>";
+  const bodyCloseIndex = bodyXml.lastIndexOf("</body>");
+  const endIndex = next?.index ?? (bodyCloseIndex >= 0 ? bodyCloseIndex : bodyXml.length);
+  const content = bodyXml.slice(current.index, endIndex);
+  return `${bodyOpen}${content}</body>`;
+};
+
+export const parseCbetaXml = (
+  item: CbetaCatalogItem,
+  xml: string,
+  options: CbetaLoadOptions = {},
+): SutraWork => {
   const gaijiMap = extractGaijiMap(xml);
   const title = extractTitle(item, xml, gaijiMap);
   const author = extractAuthor(xml, gaijiMap);
   const extent = extractExtent(xml, gaijiMap);
-  const bodyXml = extractBodyXml(xml);
-  const { sections, blocks } = splitIntoBlocks(item, title, bodyXml, gaijiMap);
+  const fullBodyXml = extractBodyXml(xml);
+  const juanRange = juanRangeForCatalogItem(item, fullBodyXml);
+  const currentJuan = safeJuanForOptions(options, juanRange, fullBodyXml, title, gaijiMap, item);
+  const bodyXml = currentJuan ? sliceBodyXmlByJuan(fullBodyXml, currentJuan) : fullBodyXml;
+  const { sections, blocks } = splitIntoBlocks(item, title, bodyXml, gaijiMap, currentJuan);
   const readerHtml = xmlBodyToReaderHtml(bodyXml, gaijiMap);
+  const juanCount = juanRange ? juanRange.end - juanRange.start + 1 : 1;
+  const legacyBlockOrderStart = legacyBlockOrderStartForJuan(
+    currentJuan,
+    juanRange,
+    fullBodyXml,
+    title,
+    gaijiMap,
+    item,
+  );
 
   return {
     id: item.id,
     title: item.titleSimplified ?? toSimplified(title),
-    subtitle: [item.canonTitle, item.sourceId, toSimplified(author), extent]
+    subtitle: [
+      item.canonTitle,
+      item.sourceId,
+      toSimplified(author),
+      currentJuan ? `${currentJuan} 卷` : extent,
+    ]
       .filter(Boolean)
       .join(" - "),
+    currentJuan,
+    juanStart: juanRange?.start,
+    juanEnd: juanRange?.end,
+    progressStartOffset:
+      currentJuan && juanRange
+        ? Math.max(0, currentJuan - juanRange.start) * juanProgressUnit
+        : undefined,
+    progressTotalChars:
+      currentJuan && juanRange ? juanProgressUnit * juanCount : undefined,
+    progressUnitChars: currentJuan && juanRange ? juanProgressUnit : undefined,
+    legacyBlockOrderStart: currentJuan && juanRange ? legacyBlockOrderStart : undefined,
     parserVersion: cbetaParserVersion,
     sourcePath: item.path,
     sourceUrl: item.rawUrl,

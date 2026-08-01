@@ -21,6 +21,13 @@ export type SutraWork = {
   id: string;
   title: string;
   subtitle: string;
+  currentJuan?: number;
+  juanStart?: number;
+  juanEnd?: number;
+  progressStartOffset?: number;
+  progressTotalChars?: number;
+  progressUnitChars?: number;
+  legacyBlockOrderStart?: number;
   parserVersion?: number;
   sourcePath?: string;
   sourceUrl?: string;

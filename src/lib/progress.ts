@@ -11,6 +11,11 @@ const id = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 export const totalChars = (work: SutraWork) =>
   work.blocks.reduce((sum, block) => sum + block.textSimplified.length, 0);
 
+const progressTotalChars = (work: SutraWork) =>
+  work.progressTotalChars && work.progressTotalChars > 0
+    ? work.progressTotalChars
+    : totalChars(work);
+
 export const blockStartOffset = (work: SutraWork, blockId: string) => {
   let offset = 0;
   for (const block of work.blocks) {
@@ -164,8 +169,15 @@ export const createReadRange = (
 ): ReadRange => {
   const startOffset = positionToOffset(work, start);
   const endOffset = positionToOffset(work, end);
-  const orderedStartOffset = Math.min(startOffset, endOffset);
-  const orderedEndOffset = Math.max(startOffset, endOffset);
+  const workChars = totalChars(work);
+  const progressBase = work.progressStartOffset ?? 0;
+  const progressUnit = work.progressUnitChars;
+  const toProgressOffset = (offset: number) =>
+    progressUnit && workChars > 0
+      ? Math.round((offset / workChars) * progressUnit)
+      : offset;
+  const orderedStartOffset = progressBase + toProgressOffset(Math.min(startOffset, endOffset));
+  const orderedEndOffset = progressBase + toProgressOffset(Math.max(startOffset, endOffset));
 
   return {
     id: id(),
@@ -174,12 +186,29 @@ export const createReadRange = (
     end: startOffset <= endOffset ? end : start,
     startOffset: orderedStartOffset,
     endOffset: orderedEndOffset,
-    workTotalChars: totalChars(work),
+    workTotalChars: progressTotalChars(work),
     createdAt: new Date().toISOString(),
   };
 };
 
 export const percentRead = (work: SutraWork, ranges: ReadRange[]) => {
+  if (work.progressTotalChars && work.progressTotalChars > totalChars(work)) {
+    return Math.max(
+      0,
+      Math.min(
+        mergedIntervalLength(
+          ranges
+            .map((range) => [
+              range.startOffset ?? 0,
+              range.endOffset ?? 0,
+            ] as const)
+            .sort(([a], [b]) => a - b),
+        ) / work.progressTotalChars,
+        1,
+      ),
+    );
+  }
+
   const segment = {
     id: "all",
     workId: work.id,
@@ -190,4 +219,38 @@ export const percentRead = (work: SutraWork, ranges: ReadRange[]) => {
   };
 
   return segmentReadFraction(work, segment, ranges);
+};
+
+const mergedIntervalLength = (intervals: Array<readonly [number, number]>) => {
+  let read = 0;
+  let mergedStart: number | undefined;
+  let mergedEnd: number | undefined;
+
+  for (const [rawStart, rawEnd] of intervals) {
+    const start = Math.min(rawStart, rawEnd);
+    const end = Math.max(rawStart, rawEnd);
+    if (end <= start) {
+      continue;
+    }
+
+    if (mergedStart === undefined || mergedEnd === undefined) {
+      mergedStart = start;
+      mergedEnd = end;
+      continue;
+    }
+
+    if (start <= mergedEnd) {
+      mergedEnd = Math.max(mergedEnd, end);
+    } else {
+      read += mergedEnd - mergedStart;
+      mergedStart = start;
+      mergedEnd = end;
+    }
+  }
+
+  if (mergedStart !== undefined && mergedEnd !== undefined) {
+    read += mergedEnd - mergedStart;
+  }
+
+  return read;
 };

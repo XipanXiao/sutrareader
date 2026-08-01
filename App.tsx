@@ -21,6 +21,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { WebView, WebViewMessageEvent } from "react-native-webview";
 import { cbetaCatalog } from "./src/data/cbetaCatalog";
 import { sampleSutra } from "./src/data/sampleSutra";
+import type { CbetaLoadOptions } from "./src/lib/cbeta";
 import {
   isCbetaWorkCached,
   loadCbetaWork,
@@ -144,6 +145,12 @@ function SutraReaderApp() {
 
     return cbetaCatalog[index + 1];
   }, [currentWork]);
+  const nextReaderTitle =
+    currentWork.currentJuan && currentWork.juanEnd && currentWork.currentJuan < currentWork.juanEnd
+      ? `第${currentWork.currentJuan + 1}卷`
+      : nextCatalogItem
+        ? catalogTitle(nextCatalogItem, chineseScript)
+        : undefined;
 
   useEffect(() => {
     loadReaderState().then((state) => {
@@ -208,17 +215,25 @@ function SutraReaderApp() {
     stateOverride?: ReaderState,
     positionOverride?: ReadingPosition,
     returnScreenOverride?: Screen,
+    loadOptions: CbetaLoadOptions = {},
   ) => {
     const baseState = stateOverride ?? readerState;
     setLoadingMessage(`正在载入《${catalogTitle(item, chineseScript)}》`);
     try {
       await waitForLoadingPaint();
-      const work = await loadCbetaWork(item);
-      setCurrentWork(work);
       const bookmark = baseState.bookmarks.find(
-        (candidate) => !candidate.isCompletionAnchor && candidate.workId === work.id,
+        (candidate) => !candidate.isCompletionAnchor && candidate.workId === item.id,
       );
-      const start = positionOverride ?? bookmark?.position ?? offsetToPosition(work, 0);
+      const work = await loadCbetaWork(item, {
+        ...loadOptions,
+        positionHint: loadOptions.positionHint ?? positionOverride ?? bookmark?.position,
+      });
+      setCurrentWork(work);
+      const start = positionOverride
+        ? positionForSavedPositionInWork(positionOverride, work)
+        : bookmark?.position
+          ? positionForBookmarkInWork(bookmark, work)
+          : offsetToPosition(work, 0);
       setCurrentPosition(start);
       persist({
         ...baseState,
@@ -243,8 +258,6 @@ function SutraReaderApp() {
 
   const openBookmark = async (bookmark: Bookmark) => {
     if (
-      bookmark.workId === currentWork.id ||
-      bookmark.position.workId === currentWork.id ||
       currentWork.blocks.some((block) => block.id === bookmark.position.textBlockId)
     ) {
       openReaderAt(positionForBookmarkInWork(bookmark, currentWork), screen);
@@ -260,7 +273,7 @@ function SutraReaderApp() {
     setLoadingMessage(`正在载入《${catalogTitle(item, chineseScript)}》`);
     try {
       await waitForLoadingPaint();
-      const work = await loadCbetaWork(item);
+      const work = await loadCbetaWork(item, { positionHint: bookmark.position });
       const position = positionForBookmarkInWork(bookmark, work);
       setCurrentWork(work);
       setCurrentPosition(position);
@@ -279,7 +292,6 @@ function SutraReaderApp() {
 
   const openPosition = async (position: ReadingPosition) => {
     if (
-      position.workId === currentWork.id ||
       currentWork.blocks.some((block) => block.id === position.textBlockId)
     ) {
       openReaderAt(positionForSavedPositionInWork(position, currentWork), "home");
@@ -295,7 +307,7 @@ function SutraReaderApp() {
     setLoadingMessage(`正在载入《${catalogTitle(item, chineseScript)}》`);
     try {
       await waitForLoadingPaint();
-      const work = await loadCbetaWork(item);
+      const work = await loadCbetaWork(item, { positionHint: position });
       const nextPosition = positionForSavedPositionInWork(position, work);
       setCurrentWork(work);
       setCurrentPosition(nextPosition);
@@ -325,7 +337,7 @@ function SutraReaderApp() {
       return undefined;
     }
 
-    const freshWork = await loadCbetaWork(item);
+    const freshWork = await loadCbetaWork(item, { positionHint: position });
     return {
       work: freshWork,
       position: positionForSavedPositionInWork(position, freshWork),
@@ -367,7 +379,10 @@ function SutraReaderApp() {
     completeCurrentWork = false,
   ) => {
     const positionIsAtEnd = isEndPosition(currentWork, position);
-    const shouldCompleteWork = completeCurrentWork || positionIsAtEnd;
+    const hasNextJuan =
+      Boolean(currentWork.currentJuan && currentWork.juanEnd) &&
+      (currentWork.currentJuan ?? 0) < (currentWork.juanEnd ?? 0);
+    const shouldCompleteWork = completeCurrentWork || (positionIsAtEnd && !hasNextJuan);
     const sessionStart =
       readerState.activeSessionStart?.workId === currentWork.id
         ? positionForSavedPositionInWork(readerState.activeSessionStart, currentWork)
@@ -385,10 +400,11 @@ function SutraReaderApp() {
     const nextRanges = [...readerState.readRanges, range];
     const workComplete =
       shouldCompleteWork ||
-      percentRead(
-        currentWork,
-        nextRanges.filter((candidate) => candidate.workId === currentWork.id),
-      ) >= completedThreshold;
+      (!hasNextJuan &&
+        percentRead(
+          currentWork,
+          nextRanges.filter((candidate) => candidate.workId === currentWork.id),
+        ) >= completedThreshold);
     const nextBookmarks =
       workComplete
         ? readerState.bookmarks.filter((item) => item.workId !== currentWork.id)
@@ -417,6 +433,27 @@ function SutraReaderApp() {
   };
 
   const openNextWork = () => {
+    if (
+      currentWork.currentJuan &&
+      currentWork.juanEnd &&
+      currentWork.currentJuan < currentWork.juanEnd
+    ) {
+      const item = catalogItemForWork(currentWork);
+      if (!item) {
+        return;
+      }
+
+      const nextState = saveProgressAt(
+        offsetToPosition(currentWork, totalChars(currentWork), 1),
+        false,
+        false,
+      );
+      openCatalogItem(item, "reader", nextState, undefined, undefined, {
+        juan: currentWork.currentJuan + 1,
+      });
+      return;
+    }
+
     if (!nextCatalogItem) {
       return;
     }
@@ -427,6 +464,33 @@ function SutraReaderApp() {
       true,
     );
     openCatalogItem(nextCatalogItem, "reader", nextState);
+  };
+
+  const openJuan = async (juan: number) => {
+    const item = catalogItemForWork(currentWork);
+    if (!item) {
+      return;
+    }
+
+    setLoadingMessage(`正在载入第${juan}卷`);
+    try {
+      await waitForLoadingPaint();
+      const work = await loadCbetaWork(item, { juan });
+      const position = offsetToPosition(work, 0);
+      setCurrentWork(work);
+      setCurrentPosition(position);
+      persist({
+        ...readerState,
+        activeSessionStart: position,
+        lastPosition: position,
+      });
+      setReaderOpenKey((value) => value + 1);
+      setScreen("reader");
+    } catch (error) {
+      setLoadingMessage(error instanceof Error ? error.message : "无法载入这一卷");
+      return;
+    }
+    setTimeout(() => setLoadingMessage(undefined), 120);
   };
 
   const exportProgress = async () => {
@@ -592,10 +656,9 @@ function SutraReaderApp() {
             });
           }}
           onMarkHere={markHere}
-          nextWorkTitle={
-            nextCatalogItem ? catalogTitle(nextCatalogItem, chineseScript) : undefined
-          }
+          nextWorkTitle={nextReaderTitle}
           onOpenNextWork={openNextWork}
+          onOpenJuan={openJuan}
         />
       ) : null}
       <LoadingOverlay
@@ -1300,6 +1363,7 @@ function ReaderScreen({
   onMarkHere,
   nextWorkTitle,
   onOpenNextWork,
+  onOpenJuan,
 }: {
   theme: Theme;
   work: SutraWork;
@@ -1312,6 +1376,7 @@ function ReaderScreen({
   onMarkHere: () => void;
   nextWorkTitle?: string;
   onOpenNextWork: () => void;
+  onOpenJuan: (juan: number) => void;
 }) {
   const readerItems = useMemo(
     () => createReaderTextItems(work, chineseScript),
@@ -1329,6 +1394,7 @@ function ReaderScreen({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchStatus, setSearchStatus] = useState("");
   const [searchHasHits, setSearchHasHits] = useState(false);
+  const [juanPickerOpen, setJuanPickerOpen] = useState(false);
 
   useEffect(() => {
     workRef.current = work;
@@ -1520,12 +1586,25 @@ function ReaderScreen({
           />
         ) : null}
         <View style={styles.readerMetaRow}>
-          <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={1}>
-            {displayText(work.subtitle, chineseScript)}
-          </Text>
+          <ReaderSubtitle
+            theme={theme}
+            work={work}
+            chineseScript={chineseScript}
+            onOpenJuanPicker={() => setJuanPickerOpen(true)}
+          />
           <WorkProgressBadge theme={theme} progress={progress} compact />
           <MiniBar theme={theme} fraction={progress} compact />
         </View>
+        <JuanPickerOverlay
+          theme={theme}
+          work={work}
+          visible={juanPickerOpen}
+          onClose={() => setJuanPickerOpen(false)}
+          onSelect={(juan) => {
+            setJuanPickerOpen(false);
+            onOpenJuan(juan);
+          }}
+        />
         <View style={styles.readerLoading}>
           <ActivityIndicator color={theme.accent} />
           <Text style={[styles.readerLoadingText, { color: theme.muted }]}>正在排版经文</Text>
@@ -1556,9 +1635,12 @@ function ReaderScreen({
         />
       ) : null}
       <View style={styles.readerMetaRow}>
-        <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={1}>
-          {displayText(work.subtitle, chineseScript)}
-        </Text>
+        <ReaderSubtitle
+          theme={theme}
+          work={work}
+          chineseScript={chineseScript}
+          onOpenJuanPicker={() => setJuanPickerOpen(true)}
+        />
         <WorkProgressBadge theme={theme} progress={progress} compact />
         <MiniBar theme={theme} fraction={progress} compact />
       </View>
@@ -1574,6 +1656,139 @@ function ReaderScreen({
         showsVerticalScrollIndicator={false}
         style={[styles.readerWebView, { backgroundColor: theme.background }]}
       />
+      <JuanPickerOverlay
+        theme={theme}
+        work={work}
+        visible={juanPickerOpen}
+        onClose={() => setJuanPickerOpen(false)}
+        onSelect={(juan) => {
+          setJuanPickerOpen(false);
+          onOpenJuan(juan);
+        }}
+      />
+    </View>
+  );
+}
+
+function ReaderSubtitle({
+  theme,
+  work,
+  chineseScript,
+  onOpenJuanPicker,
+}: {
+  theme: Theme;
+  work: SutraWork;
+  chineseScript: ChineseScript;
+  onOpenJuanPicker: () => void;
+}) {
+  const juanLabel = work.currentJuan ? `${work.currentJuan} 卷` : undefined;
+  const subtitle = displayText(work.subtitle, chineseScript);
+  const prefix =
+    juanLabel && subtitle.endsWith(juanLabel)
+      ? subtitle.slice(0, -juanLabel.length).replace(/\s*-\s*$/, "")
+      : subtitle;
+  const canPickJuan = Boolean(work.currentJuan && work.juanStart && work.juanEnd);
+
+  if (!canPickJuan || !juanLabel) {
+    return (
+      <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={1}>
+        {subtitle}
+      </Text>
+    );
+  }
+
+  return (
+    <View style={styles.readerSubheadRow}>
+      <Text style={[styles.readerSubhead, { color: theme.muted }]} numberOfLines={1}>
+        {prefix} -{' '}
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`选择卷数，当前第${work.currentJuan}卷`}
+        onPress={onOpenJuanPicker}
+        style={[
+          styles.juanButton,
+          { borderColor: theme.border, backgroundColor: theme.input },
+        ]}
+      >
+        <Text style={[styles.juanButtonText, { color: theme.accent }]}>
+          {work.currentJuan} 卷
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function JuanPickerOverlay({
+  theme,
+  work,
+  visible,
+  onClose,
+  onSelect,
+}: {
+  theme: Theme;
+  work: SutraWork;
+  visible: boolean;
+  onClose: () => void;
+  onSelect: (juan: number) => void;
+}) {
+  if (!visible || !work.currentJuan || !work.juanStart || !work.juanEnd) {
+    return null;
+  }
+
+  const juans = Array.from(
+    { length: work.juanEnd - work.juanStart + 1 },
+    (_, index) => work.juanStart! + index,
+  );
+
+  return (
+    <View style={styles.juanOverlay}>
+      <Pressable style={styles.juanBackdrop} onPress={onClose} />
+      <View
+        style={[
+          styles.juanPickerCard,
+          { backgroundColor: theme.background, borderColor: theme.border },
+        ]}
+      >
+        <View style={styles.juanPickerHeader}>
+          <Text style={[styles.juanPickerTitle, { color: theme.text }]}>选择卷数</Text>
+          <Pressable accessibilityRole="button" onPress={onClose}>
+            <Text style={[styles.juanPickerClose, { color: theme.accent }]}>关闭</Text>
+          </Pressable>
+        </View>
+        <ScrollView
+          style={styles.juanPickerScroll}
+          contentContainerStyle={styles.juanPickerList}
+        >
+          {juans.map((juan) => {
+            const selected = juan === work.currentJuan;
+            return (
+              <Pressable
+                key={juan}
+                accessibilityRole="button"
+                accessibilityLabel={`第${juan}卷`}
+                onPress={() => onSelect(juan)}
+                style={[
+                  styles.juanPickerItem,
+                  {
+                    backgroundColor: selected ? theme.accent : theme.input,
+                    borderColor: selected ? theme.accent : theme.border,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.juanPickerItemText,
+                    { color: selected ? theme.onAccent : theme.text },
+                  ]}
+                >
+                  {juan}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
     </View>
   );
 }
@@ -1712,9 +1927,9 @@ function createReaderHtml({
     })),
   );
   const activeItem = JSON.stringify(activeItemId ?? "");
-  const endPanel = `<section class="end-panel"><h2>已到本部末尾</h2><p>${
-    nextWorkTitle ? `下一部：${escapeHtml(nextWorkTitle)}` : "已到经藏末尾"
-  }</p>${nextWorkTitle ? `<button id="next-work">下一部</button>` : ""}</section>`;
+  const endPanel = `<section class="end-panel"><h2>已到当前阅读段末尾</h2><p>${
+    nextWorkTitle ? `下一段：${escapeHtml(nextWorkTitle)}` : "已到经藏末尾"
+  }</p>${nextWorkTitle ? `<button id="next-work">继续阅读</button>` : ""}</section>`;
 
   return `<!doctype html>
 <html lang="zh-Hans">
@@ -2748,20 +2963,35 @@ function positionForSavedPositionInWork(
   work: SutraWork,
 ): ReadingPosition {
   const block = work.blocks.find((item) => item.id === position.textBlockId);
-  if (!block) {
+  const legacyBlock = block ?? legacyPositionBlock(position, work);
+  if (!legacyBlock) {
     return offsetToPosition(work, 0);
   }
 
   return {
     ...position,
     workId: work.id,
-    textBlockId: block.id,
-    anchorId: block.anchorId,
+    textBlockId: legacyBlock.id,
+    anchorId: legacyBlock.anchorId,
     charOffset: Math.max(
       0,
-      Math.min(position.charOffset, block.textSimplified.length),
+      Math.min(position.charOffset, legacyBlock.textSimplified.length),
     ),
   };
+}
+
+function legacyPositionBlock(position: ReadingPosition, work: SutraWork) {
+  const match = position.textBlockId.match(/-block-(\d+)$/);
+  if (!match || work.legacyBlockOrderStart === undefined) {
+    return undefined;
+  }
+
+  const legacyOrder = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(legacyOrder)) {
+    return undefined;
+  }
+
+  return work.blocks[legacyOrder - work.legacyBlockOrderStart];
 }
 
 function openGlobalSegment(
@@ -3565,11 +3795,93 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     paddingRight: 8,
   },
+  readerSubheadRow: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    minWidth: 0,
+  },
   readerMetaRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: 5,
     marginBottom: 10,
+  },
+  juanButton: {
+    alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 28,
+    minWidth: 54,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  juanButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  juanOverlay: {
+    bottom: 0,
+    justifyContent: "flex-end",
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    zIndex: 20,
+  },
+  juanBackdrop: {
+    backgroundColor: "rgba(0, 0, 0, 0.16)",
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
+  juanPickerCard: {
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    borderWidth: 1,
+    maxHeight: "58%",
+    paddingBottom: 16,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  juanPickerHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  juanPickerTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  juanPickerClose: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  juanPickerScroll: {
+    flexGrow: 0,
+  },
+  juanPickerList: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingBottom: 6,
+  },
+  juanPickerItem: {
+    alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 38,
+    justifyContent: "center",
+    minWidth: 48,
+    paddingHorizontal: 10,
+  },
+  juanPickerItemText: {
+    fontSize: 15,
+    fontWeight: "700",
   },
   readerWebView: {
     flex: 1,
