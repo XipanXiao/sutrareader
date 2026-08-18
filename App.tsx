@@ -468,7 +468,7 @@ function SutraReaderApp() {
     openCatalogItem(nextCatalogItem, "reader", nextState);
   };
 
-  const openJuan = async (juan: number) => {
+  const openJuan = async (juan: number, returnScreenOverride?: Screen) => {
     const item = catalogItemForWork(currentWork);
     if (!item) {
       return;
@@ -487,6 +487,7 @@ function SutraReaderApp() {
         lastPosition: position,
       });
       setReaderOpenKey((value) => value + 1);
+      setReaderReturnScreen(returnScreenOverride ?? (screen === "reader" ? readerReturnScreen : screen));
       setScreen("reader");
     } catch (error) {
       setLoadingMessage(error instanceof Error ? error.message : "无法载入这一卷");
@@ -638,6 +639,7 @@ function SutraReaderApp() {
           readerState={readerState}
           onBack={() => setScreen("home")}
           onOpen={openReaderAt}
+          onOpenJuan={(juan) => openJuan(juan, "outline")}
         />
       ) : null}
       {screen === "reader" ? (
@@ -1298,6 +1300,7 @@ function OutlineScreen({
   readerState,
   onBack,
   onOpen,
+  onOpenJuan,
 }: {
   theme: Theme;
   work: SutraWork;
@@ -1305,13 +1308,80 @@ function OutlineScreen({
   readerState: ReaderState;
   onBack: () => void;
   onOpen: (position: ReadingPosition) => void;
+  onOpenJuan: (juan: number) => void;
 }) {
   const workRanges = readerState.readRanges.filter((range) => range.workId === work.id);
+  const juans =
+    work.juanStart && work.juanEnd
+      ? Array.from(
+          { length: work.juanEnd - work.juanStart + 1 },
+          (_, index) => work.juanStart! + index,
+        )
+      : [];
 
   return (
     <View style={styles.screen}>
       <TopBar theme={theme} title="目录" onBack={onBack} />
       <ScrollView showsVerticalScrollIndicator={false}>
+        {juans.length ? (
+          <View style={styles.outlineJuanPanel}>
+            <View style={styles.outlineSectionHeader}>
+              <Text style={[styles.outlineSectionTitle, { color: theme.text }]}>全本卷次</Text>
+              <Text style={[styles.outlineSectionMeta, { color: theme.muted }]}>
+                当前第 {work.currentJuan} 卷
+              </Text>
+            </View>
+            <View style={styles.outlineJuanGrid}>
+              {juans.map((juan) => {
+                const fraction = juanReadFraction(work, workRanges, juan);
+                const current = juan === work.currentJuan;
+                const complete = fraction >= completedThreshold;
+                return (
+                  <Pressable
+                    key={juan}
+                    accessibilityRole="button"
+                    accessibilityLabel={`第${juan}卷，已读${formatPercent(fraction)}`}
+                    onPress={() => onOpenJuan(juan)}
+                    style={[
+                      styles.outlineJuanChip,
+                      {
+                        backgroundColor: complete
+                          ? theme.complete
+                          : fraction > 0
+                            ? theme.selection
+                            : theme.input,
+                        borderColor: current ? theme.accent : theme.border,
+                        borderWidth: current ? 2 : 1,
+                      },
+                    ]}
+                  >
+                    {fraction > 0 && !complete ? (
+                      <View
+                        style={[
+                          styles.outlineJuanFill,
+                          { backgroundColor: theme.partial, width: `${Math.round(fraction * 100)}%` },
+                        ]}
+                      />
+                    ) : null}
+                    <Text
+                      style={[
+                        styles.outlineJuanText,
+                        { color: complete ? theme.onAccent : theme.text },
+                      ]}
+                    >
+                      {juan}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+        <View style={styles.outlineSectionHeader}>
+          <Text style={[styles.outlineSectionTitle, { color: theme.text }]}>
+            {work.currentJuan ? `第 ${work.currentJuan} 卷目录` : "本部目录"}
+          </Text>
+        </View>
         {work.sections.map((section) => {
           const firstBlock = work.blocks.find((block) => block.id === section.blockIds[0]);
           const sectionStart = firstBlock ? makePosition(work.id, firstBlock, 0, 0) : null;
@@ -3005,6 +3075,61 @@ function legacyPositionBlock(position: ReadingPosition, work: SutraWork) {
   return work.blocks[legacyOrder - work.legacyBlockOrderStart];
 }
 
+function juanReadFraction(work: SutraWork, ranges: ReaderState["readRanges"], juan: number) {
+  if (!work.juanStart || !work.progressUnitChars || !work.progressTotalChars) {
+    return 0;
+  }
+
+  const startOffset = (juan - work.juanStart) * work.progressUnitChars;
+  const endOffset = startOffset + work.progressUnitChars;
+  const read = mergedReadLengthForOffsets(ranges, startOffset, endOffset);
+  return Math.max(0, Math.min(read / work.progressUnitChars, 1));
+}
+
+function mergedReadLengthForOffsets(
+  ranges: ReaderState["readRanges"],
+  startOffset: number,
+  endOffset: number,
+) {
+  const intervals = ranges
+    .map((range) => {
+      const start = range.startOffset ?? 0;
+      const end = range.endOffset ?? 0;
+      return [
+        Math.max(startOffset, Math.min(start, end)),
+        Math.min(endOffset, Math.max(start, end)),
+      ] as const;
+    })
+    .filter(([start, end]) => end > start)
+    .sort(([a], [b]) => a - b);
+
+  let read = 0;
+  let mergedStart: number | undefined;
+  let mergedEnd: number | undefined;
+
+  for (const [start, end] of intervals) {
+    if (mergedStart === undefined || mergedEnd === undefined) {
+      mergedStart = start;
+      mergedEnd = end;
+      continue;
+    }
+
+    if (start <= mergedEnd) {
+      mergedEnd = Math.max(mergedEnd, end);
+    } else {
+      read += mergedEnd - mergedStart;
+      mergedStart = start;
+      mergedEnd = end;
+    }
+  }
+
+  if (mergedStart !== undefined && mergedEnd !== undefined) {
+    read += mergedEnd - mergedStart;
+  }
+
+  return read;
+}
+
 function openGlobalSegment(
   segment: GlobalProgressSegment,
   workFractions: Record<string, number>,
@@ -3712,6 +3837,48 @@ const styles = StyleSheet.create({
   },
   cacheBadge: {
     fontSize: 13,
+    fontWeight: "700",
+  },
+  outlineJuanPanel: {
+    marginBottom: 18,
+  },
+  outlineSectionHeader: {
+    alignItems: "baseline",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  outlineSectionTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  outlineSectionMeta: {
+    fontSize: 12,
+  },
+  outlineJuanGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+  },
+  outlineJuanChip: {
+    alignItems: "center",
+    borderRadius: 8,
+    height: 34,
+    justifyContent: "center",
+    minWidth: 42,
+    overflow: "hidden",
+    paddingHorizontal: 8,
+    position: "relative",
+  },
+  outlineJuanFill: {
+    bottom: 0,
+    left: 0,
+    opacity: 0.32,
+    position: "absolute",
+    top: 0,
+  },
+  outlineJuanText: {
+    fontSize: 14,
     fontWeight: "700",
   },
   outlineRow: {
