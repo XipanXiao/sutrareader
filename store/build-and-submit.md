@@ -4,6 +4,14 @@ These commands should be run after the Apple Developer Program account is active
 
 ## 1. Install / Use EAS
 
+Use Node `20.19.4` or newer. If you use `nvm`:
+
+```bash
+cd /Users/xipanxiao/Source/sutrareader
+nvm install
+nvm use
+```
+
 Prefer `npx` so a global install is not required:
 
 ```bash

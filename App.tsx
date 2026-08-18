@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Linking,
   Pressable,
   PanResponder,
   ScrollView,
@@ -82,6 +83,7 @@ const cbetaFontUrl = "https://cbetaonline.dila.edu.tw/fonts/cbetarc.woff2";
 const completedThreshold = 0.999;
 const defaultCatalogItem =
   cbetaCatalog.find((item) => item.id === "T01n0001") ?? cbetaCatalog[0];
+const privacyPolicyUrl = "https://github.com/XipanXiao/sutrareader/blob/main/PRIVACY.md";
 const catalogIndexById = new Map(
   cbetaCatalog.map((item, index) => [item.id, index] as const),
 );
@@ -843,6 +845,15 @@ function HomeScreen({
           {currentWork.sourceAttribution}
         </Text>
       ) : null}
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel="隐私政策"
+        onPress={() => Linking.openURL(privacyPolicyUrl)}
+      >
+        <Text style={[styles.sourceText, styles.privacyLink, { color: theme.accent }]}>
+          隐私政策
+        </Text>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -3598,6 +3609,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     marginTop: 18,
+  },
+  privacyLink: {
+    fontWeight: "700",
+    marginTop: 8,
   },
   topBar: {
     alignItems: "center",

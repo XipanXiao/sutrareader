@@ -11,6 +11,7 @@
       "distribution": "internal"
     },
     "production": {
+      "node": "20.19.4",
       "autoIncrement": true,
       "ios": {
         "simulator": false
