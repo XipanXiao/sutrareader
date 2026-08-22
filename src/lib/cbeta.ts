@@ -8,7 +8,7 @@ const convertToSimplified = Converter({ from: "tw", to: "cn" });
 const toSimplified = (text: string) => preserveRareGlyphConversions(text, convertToSimplified(text));
 const preferredSourceKey = "sutrareader.cbetaPreferredSource.v1";
 const sourceTimeoutMs = 8000;
-const cbetaParserVersion = 29;
+const cbetaParserVersion = 30;
 const juanProgressUnit = 10000;
 const cbetaSourceTemplates = [
   {
@@ -795,7 +795,7 @@ export const parseCbetaXml = (
       item.canonTitle,
       item.sourceId,
       toSimplified(author),
-      currentJuan ? `${currentJuan} 卷` : extent,
+      currentJuan ? `卷${currentJuan}` : extent,
     ]
       .filter(Boolean)
       .join(" - "),
