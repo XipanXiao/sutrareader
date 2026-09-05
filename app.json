@@ -28,11 +28,6 @@
         "backgroundColor": "#faf8f2"
       }
     },
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#faf8f2"
-    },
     "web": {
       "bundler": "metro"
     },
@@ -40,6 +35,18 @@
       "eas": {
         "projectId": "dec5e1fd-738b-4c38-948a-aa3844f48c7d"
       }
-    }
+    },
+    "plugins": [
+      "expo-sharing",
+      "expo-status-bar",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#faf8f2"
+        }
+      ]
+    ]
   }
 }
