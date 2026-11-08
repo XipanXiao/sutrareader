@@ -1466,7 +1466,7 @@ function ReaderScreen({
   const onPositionChangeRef = useRef(onPositionChange);
   const readerItemsRef = useRef(readerItems);
   const lastReportedItemRef = useRef("");
-  const webViewRef = useRef<WebView>(null);
+  const webViewRef = useRef<WebView<object>>(null);
   const [readerSource, setReaderSource] = useState<{ uri: string; key: string }>();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1706,7 +1706,7 @@ function ReaderScreen({
         <MiniBar theme={theme} fraction={progress} compact />
       </View>
 
-      <WebView
+      <WebView<object>
         ref={webViewRef}
         key={readerSource.key}
         originWhitelist={["*"]}
@@ -2387,7 +2387,7 @@ function TopBar({
         <Text style={[styles.backText, { color: theme.accent }]}>返回</Text>
       </Pressable>
       {renderTitleInWebView ? (
-        <WebView
+        <WebView<object>
           originWhitelist={["*"]}
           source={{ html: topBarTitleHtml(title, theme) }}
           style={[styles.topTitleWebView, { backgroundColor: theme.background }]}
